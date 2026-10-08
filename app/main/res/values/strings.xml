@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">FOTON DXF Hat Seçici</string>
+    <string name="accessibility_desc">Robot Kontrol Sistemi içinde Boru Kesit No alanını algılar, DXF hat seçiciyi açar ve seçilen baca bilgilerini alanlara aktarmaya çalışır.</string>
+</resources>
