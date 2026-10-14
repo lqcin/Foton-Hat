@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -36,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var activeDrawing: DxfDrawing? = null
     private var completed = mutableSetOf<String>()
     private lateinit var completionStore: CompletionStore
+    private var launchedFromIme: Boolean = false
     private val executor = Executors.newSingleThreadExecutor()
 
     private val openMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -77,8 +79,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_FROM_ROBOT, false) == true) {
-            status.text = "Boru Kesit No için geldin. FOTONMAP üzerinde hattı seç ve ONAYLA."
+        if (intent?.getBooleanExtra(EXTRA_FROM_IME, false) == true) {
+            launchedFromIme = true
+            status.text = "FOTON Klavye için hat seçimi. Hattı seç ve ONAYLA; Boru Kesit No Robot alanına yazılacak."
         }
     }
 
@@ -95,8 +98,11 @@ class MainActivity : AppCompatActivity() {
         }
         top.addView(button("FOTONMAP AÇ") { openMap.launch(arrayOf("*/*")) })
         top.addView(button("PDF OLUŞTUR") { requestPdf() })
-        top.addView(button("ROBOT ERİŞİMİ") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        top.addView(button("KLAVYEYİ ETKİNLEŞTİR") {
+            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        })
+        top.addView(button("KLAVYE SEÇ") {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
         })
         top.addView(button("GÖRÜNÜMÜ TOPARLA") { mapView.resetView() })
 
@@ -236,10 +242,12 @@ class MainActivity : AppCompatActivity() {
             endManhole = info.endName,
             lengthMeters = info.lengthMeters
         )
-        val service = RobotAssistAccessibilityService.instance
-        if (service != null && service.hasRobotTarget()) {
-            service.sendSelectionToRobot(payload)
-            status.text = "${info.sectionNo} tamamlandı. Robot uygulamasına aktarılıyor..."
+        if (launchedFromIme) {
+            ImeSelectionStore.save(this, payload.sectionNo)
+            FotonInputMethodService.instance?.queueSection(payload.sectionNo)
+            status.text = "${info.sectionNo} seçildi. Robot alanına dönülüyor..."
+            // Robot Kontrol Sistemi yeniden öne gelir; klavye bekleyen değeri aktif alana yazar.
+            finish()
         } else {
             copyFallback(payload)
             status.text = "${info.sectionNo} yeşil işaretlendi. Kesit no panoya kopyalandı."
@@ -316,6 +324,8 @@ class MainActivity : AppCompatActivity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     companion object {
-        const val EXTRA_FROM_ROBOT = "from_robot"
+        const val EXTRA_FROM_IME = "from_ime"
+        // Eski accessibility sinifi repoda kalsa bile derleme uyumlu kalsin.
+        const val EXTRA_FROM_ROBOT = "from_robot_legacy"
     }
 }
