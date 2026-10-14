@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">FOTONMAP Hat Seçici</string>
-    <string name="accessibility_desc">Robot Kontrol Sistemi içinde Boru Kesit No alanını algılar, FOTONMAP hat seçiciyi açar ve seçilen baca bilgilerini alanlara aktarmaya çalışır.</string>
+    <string name="ime_name">FOTON Klavye</string>
 </resources>
