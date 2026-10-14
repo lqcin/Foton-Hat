@@ -26,6 +26,19 @@ class LineResolver(private val drawing: DxfDrawing) {
     }
 
     fun resolve(segment: DxfSegment): SelectedLineInfo {
+        // FOTONMAP exporter iki baca adını zaten AutoCAD tarafında çözmüşse
+        // tablette tekrar tahmin etmiyoruz. Bu, yeni mimarinin temel amacı.
+        if (segment.fromName.isNotBlank() || segment.toName.isNotBlank()) {
+            return SelectedLineInfo(
+                segment = segment,
+                startName = segment.fromName.ifBlank { "?" },
+                endName = segment.toName.ifBlank { "?" },
+                startPoint = segment.a,
+                endPoint = segment.b
+            )
+        }
+
+        // Eski DXF mantığına karşı geriye dönük emniyet.
         val start = nearestManhole(segment.a)
         val end = nearestManhole(segment.b)
         val startName = start?.label?.text?.trim().takeUnless { it.isNullOrBlank() } ?: nearestLabel(segment.a)?.text ?: "?"

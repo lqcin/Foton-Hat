@@ -10,7 +10,6 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import kotlin.math.max
 import kotlin.math.min
 
 class DxfView @JvmOverloads constructor(
@@ -43,26 +42,25 @@ class DxfView @JvmOverloads constructor(
     private var fitInitialized = false
 
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(120, 160, 190); strokeWidth = dp(1.4f); style = Paint.Style.STROKE
+        color = Color.rgb(118, 158, 188); strokeWidth = dp(1.5f); style = Paint.Style.STROKE
     }
     private val completedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(44, 210, 120); strokeWidth = dp(3.2f); style = Paint.Style.STROKE
+        color = Color.rgb(45, 220, 125); strokeWidth = dp(3.5f); style = Paint.Style.STROKE
     }
     private val selectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(255, 183, 77); strokeWidth = dp(4.2f); style = Paint.Style.STROKE
+        color = Color.rgb(255, 183, 77); strokeWidth = dp(4.5f); style = Paint.Style.STROKE
     }
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(110, 150, 180); strokeWidth = dp(1.2f); style = Paint.Style.STROKE
+        color = Color.rgb(132, 174, 201); strokeWidth = dp(1.1f); style = Paint.Style.STROKE
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(235, 242, 250); textSize = sp(12f)
+        color = Color.rgb(238, 244, 250)
     }
-    private val gridPaint = Paint().apply { color = Color.rgb(24, 37, 56) }
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             val old = userScale
-            userScale = (userScale * detector.scaleFactor).coerceIn(0.25f, 30f)
+            userScale = (userScale * detector.scaleFactor).coerceIn(0.25f, 40f)
             val ratio = userScale / old
             panX = detector.focusX - (detector.focusX - panX) * ratio
             panY = detector.focusY - (detector.focusY - panY) * ratio
@@ -116,17 +114,29 @@ class DxfView @JvmOverloads constructor(
             canvas.drawLine(a.x, a.y, b.x, b.y, paint)
         }
 
-        val r = resolver
-        if (r != null) {
-            val labelScale = (baseScale * userScale).coerceAtLeast(0.001f)
-            r.manholeLabels().forEach { m ->
-                val c = worldToScreen(m.point, d)
-                val rr = ((m.circle?.radius ?: 0.25) * labelScale).toFloat().coerceIn(dp(2f), dp(9f))
-                canvas.drawCircle(c.x, c.y, rr, circlePaint)
-                if (userScale >= 0.8f) {
-                    canvas.drawText(m.label.text, c.x + dp(6f), c.y - dp(5f), textPaint)
-                }
-            }
+        d.circles.forEach { circle ->
+            val c = worldToScreen(circle.center, d)
+            val rr = (circle.radius * baseScale * userScale).toFloat().coerceIn(dp(1.5f), dp(12f))
+            canvas.drawCircle(c.x, c.y, rr, circlePaint)
+        }
+
+        drawTexts(canvas, d)
+    }
+
+    private fun drawTexts(canvas: Canvas, d: DxfDrawing) {
+        val scale = baseScale * userScale
+        d.texts.forEach { t ->
+            val p = worldToScreen(t.point, d)
+            val sourceSize = (t.height * scale).toFloat()
+            val size = sourceSize.coerceIn(dp(7f), dp(24f))
+            // Çok uzak planda küçük yardımcı yazıları gizle; baca adları kalır.
+            val looksLikeManhole = MANHOLE_PATTERN.matches(t.text.trim())
+            if (!looksLikeManhole && sourceSize < dp(4.5f) && userScale < 1.6f) return@forEach
+            textPaint.textSize = if (looksLikeManhole) size.coerceAtLeast(dp(9f)) else size
+            canvas.save()
+            canvas.rotate((-Math.toDegrees(t.rotation)).toFloat(), p.x, p.y)
+            canvas.drawText(t.text, p.x + dp(2f), p.y - dp(2f), textPaint)
+            canvas.restore()
         }
     }
 
@@ -139,11 +149,12 @@ class DxfView @JvmOverloads constructor(
     }
 
     private fun initializeFit(d: DxfDrawing) {
-        val sx = (width * 0.90 / d.width).toFloat()
-        val sy = (height * 0.88 / d.height).toFloat()
+        val sx = (width * 0.92 / d.width).toFloat()
+        val sy = (height * 0.90 / d.height).toFloat()
         baseScale = min(sx, sy).coerceAtLeast(0.0001f)
         userScale = 1f
-        panX = 0f; panY = 0f
+        panX = 0f
+        panY = 0f
         fitInitialized = true
     }
 
@@ -158,7 +169,8 @@ class DxfView @JvmOverloads constructor(
 
     private fun pickSegment(x: Float, y: Float) {
         val d = drawing ?: return
-        val tolerance = dp(24f)
+        // Parmak için görünmez geniş seçim bandı.
+        val tolerance = dp(26f)
         var best: DxfSegment? = null
         var bestDist = Float.MAX_VALUE
         d.segments.forEach { seg ->
@@ -186,5 +198,8 @@ class DxfView @JvmOverloads constructor(
     }
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
-    private fun sp(v: Float): Float = v * resources.displayMetrics.scaledDensity
+
+    companion object {
+        private val MANHOLE_PATTERN = Regex("^[A-Za-zÇĞİÖŞÜçğıöşü]+[0-9]+(?:-[0-9]+)*$")
+    }
 }

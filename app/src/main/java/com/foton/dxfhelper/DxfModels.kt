@@ -11,9 +11,12 @@ data class DxfSegment(
     val handle: String,
     val layer: String,
     val a: Pt,
-    val b: Pt
+    val b: Pt,
+    val fromName: String = "",
+    val toName: String = "",
+    val lengthOverride: Double? = null
 ) {
-    val length: Double get() = a.distanceTo(b)
+    val length: Double get() = lengthOverride ?: a.distanceTo(b)
 }
 
 data class DxfCircle(
@@ -28,7 +31,8 @@ data class DxfText(
     val layer: String,
     val point: Pt,
     val text: String,
-    val height: Double
+    val height: Double,
+    val rotation: Double = 0.0
 )
 
 data class DxfDrawing(
@@ -38,7 +42,9 @@ data class DxfDrawing(
     val minX: Double,
     val minY: Double,
     val maxX: Double,
-    val maxY: Double
+    val maxY: Double,
+    val sourceName: String = "",
+    val formatVersion: Int = 1
 ) {
     val width: Double get() = (maxX - minX).coerceAtLeast(1.0)
     val height: Double get() = (maxY - minY).coerceAtLeast(1.0)

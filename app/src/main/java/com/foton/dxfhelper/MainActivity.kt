@@ -10,7 +10,6 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.Gravity
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -22,7 +21,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var dxfView: DxfView
+    private lateinit var mapView: DxfView
     private lateinit var status: TextView
     private lateinit var fileLabel: TextView
     private lateinit var selectionLabel: TextView
@@ -34,20 +33,25 @@ class MainActivity : AppCompatActivity() {
     private var activeUri: Uri? = null
     private var activeName: String = ""
     private var currentInfo: SelectedLineInfo? = null
+    private var activeDrawing: DxfDrawing? = null
     private var completed = mutableSetOf<String>()
     private lateinit var completionStore: CompletionStore
     private val executor = Executors.newSingleThreadExecutor()
 
-    private val openDxf = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    private val openMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            getSharedPreferences("dxf_main", MODE_PRIVATE).edit()
+            getSharedPreferences("fotonmap_main", MODE_PRIVATE).edit()
                 .putString("active_uri", uri.toString())
                 .apply()
-            loadDxf(uri)
+            loadFotonMap(uri)
         }
+    }
+
+    private val createPdf = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        if (uri != null) exportPdf(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,9 +60,9 @@ class MainActivity : AppCompatActivity() {
         buildUi()
         handleIntent(intent)
 
-        val saved = getSharedPreferences("dxf_main", MODE_PRIVATE).getString("active_uri", null)
-        if (saved != null) loadDxf(Uri.parse(saved))
-        else status.text = "Önce proje DXF dosyasını seç."
+        val saved = getSharedPreferences("fotonmap_main", MODE_PRIVATE).getString("active_uri", null)
+        if (saved != null) loadFotonMap(Uri.parse(saved))
+        else status.text = "Önce AutoCAD'den üretilmiş .fotonmap dosyasını seç."
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -74,7 +78,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleIntent(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_FROM_ROBOT, false) == true) {
-            status.text = "Robot uygulamasındaki Boru Kesit No alanından geldin. Hattı seç ve ONAYLA."
+            status.text = "Boru Kesit No için geldin. FOTONMAP üzerinde hattı seç ve ONAYLA."
         }
     }
 
@@ -82,50 +86,50 @@ class MainActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(11, 20, 32))
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setPadding(dp(10), dp(7), dp(10), dp(7))
         }
 
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val selectButton = button("DXF SEÇ") { openDxf.launch(arrayOf("*/*")) }
-        val accessibilityButton = button("ROBOT ERİŞİMİ") {
+        top.addView(button("FOTONMAP AÇ") { openMap.launch(arrayOf("*/*")) })
+        top.addView(button("PDF OLUŞTUR") { requestPdf() })
+        top.addView(button("ROBOT ERİŞİMİ") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        val resetView = button("GÖRÜNÜMÜ TOPARLA") { dxfView.resetView() }
-        top.addView(selectButton)
-        top.addView(accessibilityButton)
-        top.addView(resetView)
+        })
+        top.addView(button("GÖRÜNÜMÜ TOPARLA") { mapView.resetView() })
 
         fileLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 15f
-            setPadding(dp(14), 0, dp(10), 0)
-            text = "DXF seçilmedi"
+            textSize = 14f
+            setPadding(dp(12), 0, dp(8), 0)
+            text = "FOTONMAP seçilmedi"
         }
         top.addView(fileLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         countLabel = TextView(this).apply {
-            setTextColor(Color.rgb(80, 220, 140)); textSize = 14f
+            setTextColor(Color.rgb(80, 220, 140))
+            textSize = 14f
             text = "0 / 0 tamamlandı"
         }
         top.addView(countLabel)
         root.addView(top)
 
         status = TextView(this).apply {
-            setTextColor(Color.rgb(188, 207, 226)); textSize = 13f
+            setTextColor(Color.rgb(188, 207, 226))
+            textSize = 13f
             setPadding(0, dp(5), 0, dp(5))
         }
         root.addView(status)
 
-        dxfView = DxfView(this).apply {
+        mapView = DxfView(this).apply {
             onSegmentSelected = { _, info ->
                 currentInfo = info
                 refreshSelection()
             }
         }
-        root.addView(dxfView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(mapView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -133,7 +137,8 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, 0)
         }
         selectionLabel = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 16f
+            setTextColor(Color.WHITE)
+            textSize = 16f
             text = "Bir hatta dokun"
         }
         bottom.addView(selectionLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -152,31 +157,38 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    private fun loadDxf(uri: Uri) {
+    private fun loadFotonMap(uri: Uri) {
         activeUri = uri
         activeName = displayName(uri)
         fileLabel.text = activeName
-        status.text = "DXF okunuyor..."
+        status.text = "FOTONMAP okunuyor..."
         currentInfo = null
+        activeDrawing = null
         refreshSelection()
 
         executor.execute {
             val result = runCatching {
                 contentResolver.openInputStream(uri).use { input ->
-                    requireNotNull(input) { "DXF açılamadı" }
-                    DxfParser.parse(input)
+                    requireNotNull(input) { "FOTONMAP açılamadı" }
+                    FotonMapParser.parse(input)
                 }
             }
             runOnUiThread {
                 result.onSuccess { drawing ->
+                    activeDrawing = drawing
                     completed = completionStore.load(uri)
-                    dxfView.drawing = drawing
-                    dxfView.completedIds = completed
-                    countLabel.text = "${completed.size} / ${drawing.segments.size} tamamlandı"
-                    status.text = "${drawing.segments.size} hat, ${drawing.circles.size} baca, ${drawing.texts.size} yazı yüklendi. Hatta dokun."
+                    // Haritada artık bulunmayan eski id'leri temizle.
+                    val valid = drawing.segments.mapTo(hashSetOf()) { it.id }
+                    completed.retainAll(valid)
+                    completionStore.save(uri, completed)
+                    mapView.drawing = drawing
+                    mapView.completedIds = completed
+                    updateCount()
+                    val named = drawing.segments.count { it.fromName.isNotBlank() && it.toName.isNotBlank() }
+                    status.text = "${drawing.segments.size} hat yüklendi • $named hattın iki baca adı hazır • hatta dokun."
                 }.onFailure { err ->
-                    status.text = "DXF okunamadı: ${err.message}"
-                    Toast.makeText(this, "DXF okunamadı", Toast.LENGTH_LONG).show()
+                    status.text = "FOTONMAP okunamadı: ${err.message}"
+                    Toast.makeText(this, "FOTONMAP okunamadı", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -203,10 +215,10 @@ class MainActivity : AppCompatActivity() {
         val info = currentInfo ?: return
         if (info.startName == "?" || info.endName == "?") {
             AlertDialog.Builder(this)
-                .setTitle("Baca adı bulunamadı")
-                .setMessage("Hattın bir ucundaki baca adı otomatik bulunamadı. Bu hattı tamamlandı işaretlemek ister misin?")
+                .setTitle("Baca adı eksik")
+                .setMessage("FOTONMAP bu hattın iki baca adından en az birini içermiyor. Yine de tamamlandı işaretlensin mi?")
                 .setNegativeButton("İptal", null)
-                .setPositiveButton("Yine de işaretle") { _, _ -> saveAndTransfer(uri, info) }
+                .setPositiveButton("İşaretle") { _, _ -> saveAndTransfer(uri, info) }
                 .show()
         } else saveAndTransfer(uri, info)
     }
@@ -214,8 +226,8 @@ class MainActivity : AppCompatActivity() {
     private fun saveAndTransfer(uri: Uri, info: SelectedLineInfo) {
         completed.add(info.segment.id)
         completionStore.save(uri, completed)
-        dxfView.completedIds = completed
-        countLabel.text = "${completed.size} / ${dxfView.drawing?.segments?.size ?: 0} tamamlandı"
+        mapView.completedIds = completed
+        updateCount()
         undoButton.isEnabled = true
 
         val payload = RobotSelection(
@@ -230,7 +242,7 @@ class MainActivity : AppCompatActivity() {
             status.text = "${info.sectionNo} tamamlandı. Robot uygulamasına aktarılıyor..."
         } else {
             copyFallback(payload)
-            status.text = "${info.sectionNo} tamamlandı. Robot erişimi aktif değil; kesit no panoya kopyalandı."
+            status.text = "${info.sectionNo} yeşil işaretlendi. Kesit no panoya kopyalandı."
         }
     }
 
@@ -239,9 +251,46 @@ class MainActivity : AppCompatActivity() {
         val id = currentInfo?.segment?.id ?: return
         if (done) completed.add(id) else completed.remove(id)
         completionStore.save(uri, completed)
-        dxfView.completedIds = completed
-        countLabel.text = "${completed.size} / ${dxfView.drawing?.segments?.size ?: 0} tamamlandı"
+        mapView.completedIds = completed
+        updateCount()
         refreshSelection()
+    }
+
+    private fun updateCount() {
+        countLabel.text = "${completed.size} / ${activeDrawing?.segments?.size ?: 0} tamamlandı"
+    }
+
+    private fun requestPdf() {
+        if (activeDrawing == null) {
+            Toast.makeText(this, "Önce FOTONMAP aç", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val clean = activeName.substringBeforeLast('.').ifBlank { "FOTONMAP" }
+            .replace(Regex("[^A-Za-z0-9ÇĞİÖŞÜçğıöşü_-]+"), "_")
+        createPdf.launch("${clean}_durum_plani.pdf")
+    }
+
+    private fun exportPdf(uri: Uri) {
+        val drawing = activeDrawing ?: return
+        val snapshot = completed.toSet()
+        status.text = "PDF hazırlanıyor..."
+        executor.execute {
+            val result = runCatching {
+                contentResolver.openOutputStream(uri).use { output ->
+                    requireNotNull(output) { "PDF dosyası açılamadı" }
+                    MapPdfExporter.write(output, drawing, snapshot, activeName)
+                }
+            }
+            runOnUiThread {
+                result.onSuccess {
+                    status.text = "PDF oluşturuldu: ${activeName.substringBeforeLast('.')} durum planı"
+                    Toast.makeText(this, "PDF oluşturuldu", Toast.LENGTH_LONG).show()
+                }.onFailure { err ->
+                    status.text = "PDF oluşturulamadı: ${err.message}"
+                    Toast.makeText(this, "PDF oluşturulamadı", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun copyFallback(payload: RobotSelection) {
@@ -252,9 +301,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun displayName(uri: Uri): String {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) return c.getString(0) ?: "proje.dxf"
+            if (c.moveToFirst()) return c.getString(0) ?: "proje.fotonmap"
         }
-        return uri.lastPathSegment ?: "proje.dxf"
+        return uri.lastPathSegment ?: "proje.fotonmap"
     }
 
     private fun button(text: String, onClick: () -> Unit): Button = Button(this).apply {
