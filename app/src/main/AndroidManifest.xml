@@ -18,16 +18,16 @@
         </activity>
 
         <service
-            android:name=".RobotAssistAccessibilityService"
-            android:exported="false"
-            android:label="FOTON Robot Yardımcısı"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            android:name=".FotonInputMethodService"
+            android:exported="true"
+            android:label="FOTON Klavye"
+            android:permission="android.permission.BIND_INPUT_METHOD">
             <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
+                <action android:name="android.view.InputMethod" />
             </intent-filter>
             <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
+                android:name="android.view.im"
+                android:resource="@xml/input_method" />
         </service>
 
     </application>
