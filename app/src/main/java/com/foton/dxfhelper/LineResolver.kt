@@ -26,29 +26,29 @@ class LineResolver(private val drawing: DxfDrawing) {
     }
 
     fun resolve(segment: DxfSegment): SelectedLineInfo {
-        // FOTONMAP exporter iki baca adını zaten AutoCAD tarafında çözmüşse
-        // tablette tekrar tahmin etmiyoruz. Bu, yeni mimarinin temel amacı.
-        if (segment.fromName.isNotBlank() || segment.toName.isNotBlank()) {
-            return SelectedLineInfo(
-                segment = segment,
-                startName = segment.fromName.ifBlank { "?" },
-                endName = segment.toName.ifBlank { "?" },
-                startPoint = segment.a,
-                endPoint = segment.b
-            )
-        }
+        // FOTONMAP exporter'ın verdiği isimler birinci kaynaktır.
+        // Sadece eksik olan uç varsa tablette geometrik/text fallback deneriz.
+        val startFallback = if (segment.fromName.isBlank()) {
+            val start = nearestManhole(segment.a)
+            start?.label?.text?.trim().takeUnless { it.isNullOrBlank() }
+                ?: nearestLabel(segment.a)?.text?.trim()
+        } else null
 
-        // Eski DXF mantığına karşı geriye dönük emniyet.
-        val start = nearestManhole(segment.a)
-        val end = nearestManhole(segment.b)
-        val startName = start?.label?.text?.trim().takeUnless { it.isNullOrBlank() } ?: nearestLabel(segment.a)?.text ?: "?"
-        val endName = end?.label?.text?.trim().takeUnless { it.isNullOrBlank() } ?: nearestLabel(segment.b)?.text ?: "?"
+        val endFallback = if (segment.toName.isBlank()) {
+            val end = nearestManhole(segment.b)
+            end?.label?.text?.trim().takeUnless { it.isNullOrBlank() }
+                ?: nearestLabel(segment.b)?.text?.trim()
+        } else null
+
+        val startName = segment.fromName.ifBlank { startFallback ?: "?" }
+        val endName = segment.toName.ifBlank { endFallback ?: "?" }
+
         return SelectedLineInfo(
             segment = segment,
             startName = startName,
             endName = endName,
-            startPoint = start?.point ?: segment.a,
-            endPoint = end?.point ?: segment.b
+            startPoint = segment.a,
+            endPoint = segment.b
         )
     }
 

@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
@@ -94,10 +95,10 @@ class FotonInputMethodService : InputMethodService() {
 
         writeButton = actionButton("SEÇİMİ YAZ") {
             loadPending()
-            if (!tryCommitPending(showFailure = true)) {
+            if (!tryWritePendingAsHardwareKeys(showFailure = true)) {
                 Toast.makeText(
                     this,
-                    "Aktif alana yazılamadı. Alanı tekrar seçip yeniden dene.",
+                    "Aktif alana donanım tuşu olarak yazılamadı. Boru Kesit No alanını tekrar seçip yeniden dene.",
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -278,9 +279,9 @@ class FotonInputMethodService : InputMethodService() {
     private fun sendEnter() {
         val ic = currentInputConnection ?: return
         val sent = runCatching {
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-            true
+            val down = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            val up = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+            down || up
         }.getOrDefault(false)
 
         if (!sent) ic.commitText("\n", 1)
@@ -289,20 +290,23 @@ class FotonInputMethodService : InputMethodService() {
     private fun clearEditorText() {
         val ic = currentInputConnection ?: return
         runCatching {
-            ic.beginBatchEdit()
-            val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
-            val length = extracted?.text?.length ?: 0
+            val batching = ic.beginBatchEdit()
+            try {
+                val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
+                val length = extracted?.text?.length ?: 0
 
-            if (length > 0 && ic.setSelection(0, length)) {
-                ic.commitText("", 1)
-            } else {
-                val before = ic.getTextBeforeCursor(4096, 0)?.length ?: 0
-                val after = ic.getTextAfterCursor(4096, 0)?.length ?: 0
-                if (before > 0 || after > 0) {
-                    ic.deleteSurroundingText(before, after)
+                if (length > 0 && ic.setSelection(0, length)) {
+                    ic.commitText("", 1)
+                } else {
+                    val before = ic.getTextBeforeCursor(4096, 0)?.length ?: 0
+                    val after = ic.getTextAfterCursor(4096, 0)?.length ?: 0
+                    if (before > 0 || after > 0) {
+                        ic.deleteSurroundingText(before, after)
+                    }
                 }
+            } finally {
+                if (batching) ic.endBatchEdit()
             }
-            ic.endBatchEdit()
         }
     }
 
@@ -335,14 +339,17 @@ class FotonInputMethodService : InputMethodService() {
 
     private fun tryCommit(token: Int) {
         if (token != retryToken) return
-        tryCommitPending(showFailure = false)
+        tryWritePendingAsHardwareKeys(showFailure = false)
     }
 
     /**
-     * Bekleyen FOTONMAP secimini mevcut aktif editorun TAMAMI yerine yazar.
-     * Basarisiz olursa secim silinmez.
+     * Haritadan gelen kesit numarasini Robot uygulamasina fiziksel klavye
+     * tuslari basilmis gibi yollar.
+     *
+     * Robot Kontrol Sistemi'nin ozel editoru commitText() kabul etmiyor olabilir;
+     * KeyEvent yolu normal donanim klavyesi davranisina daha yakindir.
      */
-    private fun tryCommitPending(showFailure: Boolean): Boolean {
+    private fun tryWritePendingAsHardwareKeys(showFailure: Boolean): Boolean {
         val text = pendingText ?: ImeSelectionStore.peek(this) ?: return false
         if (text.isBlank()) return false
 
@@ -354,46 +361,167 @@ class FotonInputMethodService : InputMethodService() {
             return false
         }
 
-        val ok = runCatching {
-            ic.beginBatchEdit()
-
-            var selectedAll = false
-            val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
-            val currentLength = extracted?.text?.length ?: 0
-            if (currentLength > 0) {
-                selectedAll = ic.setSelection(0, currentLength)
+        // Boru Kesit No formatlari ASCII: A41-A40, A38-A38-1 vb.
+        val events = buildHardwareEvents(text)
+        if (events.isEmpty()) {
+            if (showFailure) {
+                Toast.makeText(this, "Kesit numarası tuş olayına çevrilemedi.", Toast.LENGTH_SHORT).show()
             }
+            return false
+        }
 
-            if (!selectedAll) {
-                val before = ic.getTextBeforeCursor(4096, 0)?.length ?: 0
-                val after = ic.getTextAfterCursor(4096, 0)?.length ?: 0
-                if (before > 0 || after > 0) {
-                    ic.deleteSurroundingText(before, after)
-                }
+        // Önce alanın sonuna git ve eski değeri silmeye çalış.
+        runCatching {
+            sendKey(ic, KeyEvent.KEYCODE_MOVE_END)
+            repeat(64) {
+                ic.sendKeyEvent(
+                    KeyEvent(
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_DEL
+                    )
+                )
+                ic.sendKeyEvent(
+                    KeyEvent(
+                        KeyEvent.ACTION_UP,
+                        KeyEvent.KEYCODE_DEL
+                    )
+                )
             }
+        }
 
-            val result = ic.commitText(text, 1)
-            ic.endBatchEdit()
-            result
-        }.getOrDefault(false)
+        var acceptedAny = false
+        var allAccepted = true
 
-        if (ok) {
+        events.forEach { ev ->
+            val accepted = runCatching { ic.sendKeyEvent(ev) }.getOrDefault(false)
+            acceptedAny = acceptedAny || accepted
+            allAccepted = allAccepted && accepted
+        }
+
+        if (acceptedAny || allAccepted) {
+            // Aynı seçimin tekrar tekrar yazılmasını engelle.
             pendingText = null
             ImeSelectionStore.clear(this)
             retryToken++
             refreshPendingUi()
-            Toast.makeText(this, "$text yazıldı", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "$text tuş olarak gönderildi", Toast.LENGTH_SHORT).show()
+            return true
+        }
+
+        // Son emniyet: bazı custom editorlar paste'i kabul eder.
+        val pasted = tryPasteFallback(text)
+        if (pasted) {
+            pendingText = null
+            ImeSelectionStore.clear(this)
+            retryToken++
+            refreshPendingUi()
+            Toast.makeText(this, "$text yapıştırıldı", Toast.LENGTH_SHORT).show()
             return true
         }
 
         if (showFailure) {
             Toast.makeText(
                 this,
-                "Yazılamadı; seçim kaybolmadı. Alanı tekrar seçip 'SEÇİMİ YAZ' de.",
+                "Robot alanı tuş ve yapıştırma girişini kabul etmedi. Seçim kaybolmadı.",
                 Toast.LENGTH_LONG
             ).show()
         }
         return false
+    }
+
+    private fun buildHardwareEvents(text: String): List<KeyEvent> {
+        val result = mutableListOf<KeyEvent>()
+        val now = SystemClock.uptimeMillis()
+
+        text.forEach { raw ->
+            val ch = raw.uppercaseChar()
+            val spec = keySpec(ch) ?: return emptyList()
+
+            val meta = if (ch in 'A'..'Z') KeyEvent.META_SHIFT_ON else 0
+
+            result += KeyEvent(
+                now,
+                now,
+                KeyEvent.ACTION_DOWN,
+                spec,
+                0,
+                meta,
+                KeyEvent.KEYCODE_UNKNOWN,
+                0,
+                KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE
+            )
+            result += KeyEvent(
+                now,
+                now,
+                KeyEvent.ACTION_UP,
+                spec,
+                0,
+                meta,
+                KeyEvent.KEYCODE_UNKNOWN,
+                0,
+                KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE
+            )
+        }
+
+        return result
+    }
+
+    private fun keySpec(ch: Char): Int? = when (ch) {
+        'A' -> KeyEvent.KEYCODE_A
+        'B' -> KeyEvent.KEYCODE_B
+        'C' -> KeyEvent.KEYCODE_C
+        'D' -> KeyEvent.KEYCODE_D
+        'E' -> KeyEvent.KEYCODE_E
+        'F' -> KeyEvent.KEYCODE_F
+        'G' -> KeyEvent.KEYCODE_G
+        'H' -> KeyEvent.KEYCODE_H
+        'I' -> KeyEvent.KEYCODE_I
+        'J' -> KeyEvent.KEYCODE_J
+        'K' -> KeyEvent.KEYCODE_K
+        'L' -> KeyEvent.KEYCODE_L
+        'M' -> KeyEvent.KEYCODE_M
+        'N' -> KeyEvent.KEYCODE_N
+        'O' -> KeyEvent.KEYCODE_O
+        'P' -> KeyEvent.KEYCODE_P
+        'Q' -> KeyEvent.KEYCODE_Q
+        'R' -> KeyEvent.KEYCODE_R
+        'S' -> KeyEvent.KEYCODE_S
+        'T' -> KeyEvent.KEYCODE_T
+        'U' -> KeyEvent.KEYCODE_U
+        'V' -> KeyEvent.KEYCODE_V
+        'W' -> KeyEvent.KEYCODE_W
+        'X' -> KeyEvent.KEYCODE_X
+        'Y' -> KeyEvent.KEYCODE_Y
+        'Z' -> KeyEvent.KEYCODE_Z
+        '0' -> KeyEvent.KEYCODE_0
+        '1' -> KeyEvent.KEYCODE_1
+        '2' -> KeyEvent.KEYCODE_2
+        '3' -> KeyEvent.KEYCODE_3
+        '4' -> KeyEvent.KEYCODE_4
+        '5' -> KeyEvent.KEYCODE_5
+        '6' -> KeyEvent.KEYCODE_6
+        '7' -> KeyEvent.KEYCODE_7
+        '8' -> KeyEvent.KEYCODE_8
+        '9' -> KeyEvent.KEYCODE_9
+        '-' -> KeyEvent.KEYCODE_MINUS
+        '/' -> KeyEvent.KEYCODE_SLASH
+        '.' -> KeyEvent.KEYCODE_PERIOD
+        ',' -> KeyEvent.KEYCODE_COMMA
+        else -> null
+    }
+
+    private fun sendKey(ic: android.view.inputmethod.InputConnection, keyCode: Int): Boolean {
+        val down = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        val up = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        return down || up
+    }
+
+    private fun tryPasteFallback(text: String): Boolean {
+        return runCatching {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("FOTONMAP", text))
+            currentInputConnection?.performContextMenuAction(android.R.id.paste) == true
+        }.getOrDefault(false)
     }
 
     private fun actionButton(text: String, click: () -> Unit): Button =

@@ -3,11 +3,10 @@ package com.foton.dxfhelper
 import android.content.Context
 
 /**
- * FOTON Klavye <-> FOTONMAP Activity arasindaki kalici kopru.
+ * FOTON Klavye <-> FOTONMAP Activity arasındaki kalıcı köprü.
  *
- * Intent extra Android tarafinda Activity reuse / task restore sirasinda
- * kaybolabildigi icin "selection request" bilgisi de SharedPreferences'ta
- * tutulur.
+ * Harita Activity'si task reuse / resume sırasında Intent extra kaybetse bile
+ * seçim isteği ve bekleyen kesit SharedPreferences üzerinden korunur.
  */
 object ImeSelectionStore {
     private const val PREF = "foton_ime_bridge"
@@ -28,12 +27,20 @@ object ImeSelectionStore {
 
     fun clear(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .edit().remove(KEY_PENDING).commit()
+            .edit()
+            .remove(KEY_PENDING)
+            .putBoolean(KEY_REQUEST_ACTIVE, false)
+            .commit()
     }
 
+    /**
+     * Yeni bir harita seçimi başlarken eski bekleyen seçimi temizler.
+     * Böylece kullanıcı yeni hat seçerken eski Axx-Ayy yanlışlıkla yazılamaz.
+     */
     fun beginSelectionRequest(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit()
+            .remove(KEY_PENDING)
             .putBoolean(KEY_REQUEST_ACTIVE, true)
             .commit()
     }

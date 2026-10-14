@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -62,6 +63,15 @@ class MainActivity : AppCompatActivity() {
         buildUi()
         handleIntent(intent)
 
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (launchedFromIme && ImeSelectionStore.isSelectionRequestActive(this@MainActivity)) {
+                    ImeSelectionStore.cancelSelectionRequest(this@MainActivity)
+                }
+                finish()
+            }
+        })
+
         val saved = getSharedPreferences("fotonmap_main", MODE_PRIVATE).getString("active_uri", null)
         if (saved != null) loadFotonMap(Uri.parse(saved))
         else status.text = "Önce AutoCAD'den üretilmiş .fotonmap dosyasını seç."
@@ -82,8 +92,8 @@ class MainActivity : AppCompatActivity() {
         val requestedByIntent = intent?.getBooleanExtra(EXTRA_FROM_IME, false) == true
         val requestedByStore = ImeSelectionStore.isSelectionRequestActive(this)
 
-        if (requestedByIntent || requestedByStore) {
-            launchedFromIme = true
+        launchedFromIme = requestedByIntent || requestedByStore
+        if (launchedFromIme) {
             status.text = "FOTON Klavye için hat seçimi. Hattı seç ve ONAYLA; Boru Kesit No Robot alanına yazılacak."
         }
     }
@@ -341,7 +351,5 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_FROM_IME = "from_ime"
-        // Eski accessibility sinifi repoda kalsa bile derleme uyumlu kalsin.
-        const val EXTRA_FROM_ROBOT = "from_robot_legacy"
     }
 }

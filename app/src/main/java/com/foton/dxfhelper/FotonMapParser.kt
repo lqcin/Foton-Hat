@@ -13,11 +13,14 @@ object FotonMapParser {
         }
 
         val version = root.optInt("version", 1)
+        require(version == 1) { "Desteklenmeyen FOTONMAP sürümü: $version" }
+
         val bounds = root.getJSONObject("bounds")
         val minX = bounds.optDouble("minX", 0.0)
         val minY = bounds.optDouble("minY", 0.0)
         val maxX = bounds.optDouble("maxX", 1.0)
         val maxY = bounds.optDouble("maxY", 1.0)
+        require(maxX > minX && maxY > minY) { "FOTONMAP sınırları geçersiz" }
 
         val nodesArray = root.optJSONArray("nodes")
         val circles = mutableListOf<DxfCircle>()
@@ -54,6 +57,7 @@ object FotonMapParser {
         val segments = mutableListOf<DxfSegment>()
         val segArray = root.optJSONArray("segments")
             ?: error("FOTONMAP içinde segments alanı yok")
+        require(segArray.length() > 0) { "FOTONMAP içinde tıklanabilir hat yok" }
         for (i in 0 until segArray.length()) {
             val s = segArray.getJSONObject(i)
             val a = Pt(s.optDouble("x1", 0.0), s.optDouble("y1", 0.0))
