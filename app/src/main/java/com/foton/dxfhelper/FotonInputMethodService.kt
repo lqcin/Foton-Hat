@@ -1,7 +1,5 @@
 package com.foton.dxfhelper
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -9,6 +7,8 @@ import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputMethodManager
@@ -17,30 +17,30 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import java.lang.ref.WeakReference
+import java.util.Locale
 
 /**
- * FOTON klavyesi.
+ * FOTON Klavye v0.4
  *
- * Kritik kural:
- * Harita Activity'si acilinca Robot Kontrol Sistemi'ndeki aktif editorun
- * InputConnection'i gecici olarak kaybolabilir. Bu nedenle secilen hat
- * SharedPreferences'ta "pending" olarak tutulur ve ASLA zaman asimiyla silinmez.
- *
- * Akis:
- * 1) Robot'ta Boru Kesit No alanina dokun.
- * 2) FOTON Klavye -> HARITADAN HAT SEC.
- * 3) Hatti sec -> ONAYLA.
- * 4) Robot'a donulunce alan odagi korunmussa otomatik yazilir.
- * 5) Odak korunmadiysa Boru Kesit No alanina tekrar dokun.
- *    FOTON Klavye bekleyen secimi otomatik yazar.
- * 6) Gerekirse "SECIMI YAZ" dugmesine bas.
+ * - Android'de varsayilan klavye olarak sabit kullanilabilir.
+ * - Normal yazi yazabilir (Turkce Q).
+ * - Haritadan hat secme FOTON klavyenin icindedir.
+ * - Haritadan gelen secim kalici bekleyen deger olarak tutulur.
+ * - Robot uygulamasi haritadan donuste editor odagini kaybetse bile secim silinmez.
  */
 class FotonInputMethodService : InputMethodService() {
+
     private val handler = Handler(Looper.getMainLooper())
     private var pendingText: String? = null
     private var retryToken = 0
+
     private var pendingLabel: TextView? = null
     private var writeButton: Button? = null
+    private var shiftButton: Button? = null
+    private val letterButtons = mutableListOf<Pair<Button, String>>()
+
+    private var caps = true
+    private val tr = Locale("tr", "TR")
 
     override fun onCreate() {
         super.onCreate()
@@ -54,80 +54,127 @@ class FotonInputMethodService : InputMethodService() {
     }
 
     override fun onCreateInputView(): View {
+        letterButtons.clear()
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(15, 27, 42))
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setBackgroundColor(Color.rgb(12, 24, 38))
+            setPadding(dp(8), dp(5), dp(8), dp(6))
         }
 
-        val top = LinearLayout(this).apply {
+        // Üst durum satırı
+        val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val title = TextView(this).apply {
+        header.addView(TextView(this).apply {
             text = "FOTON KLAVYE"
             setTextColor(Color.WHITE)
-            textSize = 14f
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        top.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            textSize = 13f
+        }, LinearLayout.LayoutParams(0, dp(26), 1f))
 
         pendingLabel = TextView(this).apply {
             setTextColor(Color.rgb(102, 230, 160))
-            textSize = 14f
-            gravity = Gravity.END
+            textSize = 13f
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
-        top.addView(pendingLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(top)
+        header.addView(pendingLabel, LinearLayout.LayoutParams(0, dp(26), 1f))
+        root.addView(header)
 
-        val row = LinearLayout(this).apply {
+        // FOTON'a özel aksiyonlar
+        val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        row.addView(keyButton("HARİTADAN HAT SEÇ") {
+        actionRow.addView(actionButton("HARİTADAN HAT SEÇ") {
             openMapPicker()
-        }, LinearLayout.LayoutParams(0, dp(54), 1.45f))
+        }, weightParams(1.65f, 50))
 
-        writeButton = keyButton("SEÇİMİ YAZ") {
+        writeButton = actionButton("SEÇİMİ YAZ") {
             loadPending()
-            if (!tryCommitNow(showFailure = true)) {
+            if (!tryCommitPending(showFailure = true)) {
                 Toast.makeText(
                     this,
-                    "Boru Kesit No alanına tekrar dokunup 'SEÇİMİ YAZ' de.",
+                    "Aktif alana yazılamadı. Alanı tekrar seçip yeniden dene.",
                     Toast.LENGTH_LONG
                 ).show()
             }
         }.also {
-            row.addView(it, LinearLayout.LayoutParams(0, dp(54), 1.0f))
+            actionRow.addView(it, weightParams(1.0f, 50))
         }
 
-        row.addView(keyButton("⌫") {
+        actionRow.addView(actionButton("TEMİZLE") {
+            clearEditorText()
+        }, weightParams(0.72f, 50))
+
+        actionRow.addView(actionButton("⌨") {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                .showInputMethodPicker()
+        }, LinearLayout.LayoutParams(dp(58), dp(50)))
+
+        root.addView(actionRow)
+
+        // Sayılar
+        addKeyRow(
+            root,
+            listOf("1","2","3","4","5","6","7","8","9","0","-","/"),
+            letters = false
+        )
+
+        // Türkçe Q
+        addKeyRow(
+            root,
+            listOf("Q","W","E","R","T","Y","U","I","O","P","Ğ","Ü"),
+            letters = true
+        )
+        addKeyRow(
+            root,
+            listOf("A","S","D","F","G","H","J","K","L","Ş","İ"),
+            letters = true
+        )
+        addKeyRow(
+            root,
+            listOf("Z","X","C","V","B","N","M","Ö","Ç",".",","),
+            letters = true
+        )
+
+        // Alt kontrol satırı
+        val bottom = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        shiftButton = keyButton("⇧ ABC", dp(50), 15f) {
+            caps = !caps
+            updateLetterCase()
+        }.also { bottom.addView(it, weightParams(0.75f, 50)) }
+
+        bottom.addView(keyButton("BOŞLUK", dp(50), 15f) {
+            commit(" ")
+        }, weightParams(2.2f, 50))
+
+        val back = keyButton("⌫", dp(50), 20f) {
             currentInputConnection?.deleteSurroundingText(1, 0)
-        }, LinearLayout.LayoutParams(dp(66), dp(54)))
-
-        row.addView(keyButton("NORMAL KLAVYE") {
-            val switched = runCatching { switchToNextInputMethod(false) }.getOrDefault(false)
-            if (!switched) {
-                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                    .showInputMethodPicker()
+        }.apply {
+            setOnLongClickListener {
+                currentInputConnection?.deleteSurroundingText(10, 0)
+                true
             }
-        }, LinearLayout.LayoutParams(dp(135), dp(54)))
-
-        root.addView(row)
-
-        val hint = TextView(this).apply {
-            text = "Hat seçildikten sonra otomatik yazılmazsa Boru Kesit No alanına tekrar dokun. Seçim kaybolmaz."
-            setTextColor(Color.rgb(177, 198, 220))
-            textSize = 12f
-            setPadding(0, dp(4), 0, 0)
         }
-        root.addView(hint)
+        bottom.addView(back, weightParams(0.70f, 50))
+
+        bottom.addView(keyButton("ENTER", dp(50), 14f) {
+            sendEnter()
+        }, weightParams(0.85f, 50))
+
+        root.addView(bottom)
 
         loadPending()
         refreshPendingUi()
-        scheduleCommit()
+        updateLetterCase()
+        schedulePendingCommit()
         return root
     }
 
@@ -137,7 +184,7 @@ class FotonInputMethodService : InputMethodService() {
     ) {
         super.onStartInput(attribute, restarting)
         loadPending()
-        scheduleCommit()
+        schedulePendingCommit()
     }
 
     override fun onStartInputView(
@@ -147,80 +194,155 @@ class FotonInputMethodService : InputMethodService() {
         super.onStartInputView(info, restarting)
         loadPending()
         refreshPendingUi()
-        scheduleCommit()
+        schedulePendingCommit()
     }
 
     override fun onWindowShown() {
         super.onWindowShown()
         loadPending()
         refreshPendingUi()
-        scheduleCommit()
+        schedulePendingCommit()
     }
 
-    /**
-     * Harita secimi tamamlandiginda cagrilir.
-     * Deger kalici store'a yazilir. Robot editoru hemen geri gelmezse
-     * pending olarak beklemeye devam eder.
-     */
     fun notifySelectionReady(sectionNo: String) {
         if (sectionNo.isBlank()) return
+
         pendingText = sectionNo
         ImeSelectionStore.save(this, sectionNo)
         refreshPendingUi()
 
-        // Robot activity'sinin yeniden one gelmesi icin zaman tani.
         retryToken++
         val token = retryToken
-        listOf(300L, 650L, 1100L, 1800L, 2800L, 4200L).forEach { delay ->
+
+        // Robot activity yeniden öne gelirken birkaç kez dene.
+        listOf(250L, 550L, 950L, 1500L, 2400L, 3600L).forEach { delay ->
             handler.postDelayed({ tryCommit(token) }, delay)
         }
 
-        // Klavye penceresi kapanmissa tekrar gostermeyi dene.
         handler.postDelayed({
             runCatching { requestShowSelf(0) }
-        }, 500L)
+        }, 400L)
+    }
 
-        // Secimi SILME. Basarisizsa kullanici alana tekrar dokununca yazilacak.
-        handler.postDelayed({
-            if (token == retryToken && pendingText != null) {
-                refreshPendingUi()
+    private fun openMapPicker() {
+        // v0.3.3 köprüsü: Intent extra kaybolsa bile istek kalıcıdır.
+        ImeSelectionStore.beginSelectionRequest(this)
+        refreshPendingUi()
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+            putExtra(MainActivity.EXTRA_FROM_IME, true)
+        }
+        startActivity(intent)
+    }
+
+    private fun addKeyRow(
+        root: LinearLayout,
+        labels: List<String>,
+        letters: Boolean
+    ) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        labels.forEach { raw ->
+            val button = keyButton(raw, dp(46), 17f) {
+                val text = if (letters) {
+                    if (caps) raw.uppercase(tr) else raw.lowercase(tr)
+                } else raw
+                commit(text)
             }
-        }, 5000L)
+            if (letters) letterButtons += button to raw
+            row.addView(button, weightParams(1f, 46))
+        }
+
+        root.addView(row)
+    }
+
+    private fun updateLetterCase() {
+        letterButtons.forEach { (button, raw) ->
+            button.text = if (caps) raw.uppercase(tr) else raw.lowercase(tr)
+        }
+        shiftButton?.text = if (caps) "⇧ ABC" else "⇧ abc"
+    }
+
+    private fun commit(text: String) {
+        currentInputConnection?.commitText(text, 1)
+    }
+
+    private fun sendEnter() {
+        val ic = currentInputConnection ?: return
+        val sent = runCatching {
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+            true
+        }.getOrDefault(false)
+
+        if (!sent) ic.commitText("\n", 1)
+    }
+
+    private fun clearEditorText() {
+        val ic = currentInputConnection ?: return
+        runCatching {
+            ic.beginBatchEdit()
+            val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
+            val length = extracted?.text?.length ?: 0
+
+            if (length > 0 && ic.setSelection(0, length)) {
+                ic.commitText("", 1)
+            } else {
+                val before = ic.getTextBeforeCursor(4096, 0)?.length ?: 0
+                val after = ic.getTextAfterCursor(4096, 0)?.length ?: 0
+                if (before > 0 || after > 0) {
+                    ic.deleteSurroundingText(before, after)
+                }
+            }
+            ic.endBatchEdit()
+        }
     }
 
     private fun loadPending() {
         val stored = ImeSelectionStore.peek(this)
-        if (!stored.isNullOrBlank()) pendingText = stored
+        pendingText = stored
         refreshPendingUi()
     }
 
     private fun refreshPendingUi() {
         val text = pendingText ?: ImeSelectionStore.peek(this)
-        pendingLabel?.text = if (text.isNullOrBlank()) "Seçim yok" else "Bekleyen: $text"
+        pendingLabel?.text = when {
+            !text.isNullOrBlank() -> "Bekleyen: $text"
+            ImeSelectionStore.isSelectionRequestActive(this) -> "Haritadan seçim bekleniyor"
+            else -> "Hazır"
+        }
         writeButton?.isEnabled = !text.isNullOrBlank()
     }
 
-    private fun scheduleCommit() {
+    private fun schedulePendingCommit() {
         val text = pendingText ?: ImeSelectionStore.peek(this) ?: return
         if (text.isBlank()) return
 
         retryToken++
         val token = retryToken
-        listOf(80L, 250L, 550L, 950L, 1600L).forEach { delay ->
+        listOf(100L, 300L, 650L, 1100L).forEach { delay ->
             handler.postDelayed({ tryCommit(token) }, delay)
         }
     }
 
     private fun tryCommit(token: Int) {
         if (token != retryToken) return
-        tryCommitNow(showFailure = false)
+        tryCommitPending(showFailure = false)
     }
 
     /**
-     * Aktif editor varsa mevcut metni secip / silip FOTON secimini yazar.
-     * Basarili olursa pending temizlenir. Basarisiz olursa pending KORUNUR.
+     * Bekleyen FOTONMAP secimini mevcut aktif editorun TAMAMI yerine yazar.
+     * Basarisiz olursa secim silinmez.
      */
-    private fun tryCommitNow(showFailure: Boolean): Boolean {
+    private fun tryCommitPending(showFailure: Boolean): Boolean {
         val text = pendingText ?: ImeSelectionStore.peek(this) ?: return false
         if (text.isBlank()) return false
 
@@ -235,24 +357,18 @@ class FotonInputMethodService : InputMethodService() {
         val ok = runCatching {
             ic.beginBatchEdit()
 
-            var replaced = false
-
-            // 1) Editor tum metni raporluyorsa en temiz yol: tumunu sec.
+            var selectedAll = false
             val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
             val currentLength = extracted?.text?.length ?: 0
             if (currentLength > 0) {
-                replaced = ic.setSelection(0, currentLength)
+                selectedAll = ic.setSelection(0, currentLength)
             }
 
-            // 2) setSelection desteklenmiyorsa cursor etrafindaki metni sil.
-            if (!replaced) {
-                val before = ic.getTextBeforeCursor(2048, 0)?.length ?: 0
-                val after = ic.getTextAfterCursor(2048, 0)?.length ?: 0
+            if (!selectedAll) {
+                val before = ic.getTextBeforeCursor(4096, 0)?.length ?: 0
+                val after = ic.getTextAfterCursor(4096, 0)?.length ?: 0
                 if (before > 0 || after > 0) {
                     ic.deleteSurroundingText(before, after)
-                } else {
-                    // Custom editorlarda bu bazen calisir.
-                    ic.performContextMenuAction(android.R.id.selectAll)
                 }
             }
 
@@ -273,34 +389,53 @@ class FotonInputMethodService : InputMethodService() {
         if (showFailure) {
             Toast.makeText(
                 this,
-                "Otomatik yazılamadı. Seçim beklemede; alanı tekrar dokunup yeniden dene.",
+                "Yazılamadı; seçim kaybolmadı. Alanı tekrar seçip 'SEÇİMİ YAZ' de.",
                 Toast.LENGTH_LONG
             ).show()
         }
         return false
     }
 
-    private fun openMapPicker() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
-            )
-            putExtra(MainActivity.EXTRA_FROM_IME, true)
+    private fun actionButton(text: String, click: () -> Unit): Button =
+        keyButton(text, dp(50), 14f, click).apply {
+            setBackgroundColor(Color.rgb(29, 90, 166))
         }
-        startActivity(intent)
-    }
 
-    private fun keyButton(text: String, click: () -> Unit) = Button(this).apply {
+    private fun keyButton(
+        text: String,
+        height: Int,
+        sizeSp: Float,
+        click: () -> Unit
+    ) = Button(this).apply {
         this.text = text
         isAllCaps = false
+        textSize = sizeSp
         setTextColor(Color.WHITE)
-        setBackgroundColor(Color.rgb(35, 91, 158))
-        setOnClickListener { click() }
+        setBackgroundColor(Color.rgb(33, 58, 86))
+        minHeight = 0
+        minimumHeight = 0
+        minWidth = 0
+        minimumWidth = 0
+        setPadding(dp(2), 0, dp(2), 0)
+        setOnClickListener {
+            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            click()
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            height
+        ).apply {
+            setMargins(dp(2), dp(2), dp(2), dp(2))
+        }
     }
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun weightParams(weight: Float, height: Int) =
+        LinearLayout.LayoutParams(0, dp(height), weight).apply {
+            setMargins(dp(2), dp(2), dp(2), dp(2))
+        }
+
+    private fun dp(v: Int): Int =
+        (v * resources.displayMetrics.density).toInt()
 
     companion object {
         private var ref: WeakReference<FotonInputMethodService>? = null

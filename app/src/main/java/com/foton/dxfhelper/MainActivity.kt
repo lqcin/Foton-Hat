@@ -79,7 +79,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_FROM_IME, false) == true) {
+        val requestedByIntent = intent?.getBooleanExtra(EXTRA_FROM_IME, false) == true
+        val requestedByStore = ImeSelectionStore.isSelectionRequestActive(this)
+
+        if (requestedByIntent || requestedByStore) {
             launchedFromIme = true
             status.text = "FOTON Klavye için hat seçimi. Hattı seç ve ONAYLA; Boru Kesit No Robot alanına yazılacak."
         }
@@ -104,7 +107,9 @@ class MainActivity : AppCompatActivity() {
         top.addView(button("KLAVYE SEÇ") {
             (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
         })
-        top.addView(button("GÖRÜNÜMÜ TOPARLA") { mapView.resetView() })
+        top.addView(button("−") { mapView.zoomOut() })
+        top.addView(button("+") { mapView.zoomIn() })
+        top.addView(button("SIĞDIR") { mapView.resetView() })
 
         fileLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
@@ -242,8 +247,12 @@ class MainActivity : AppCompatActivity() {
             endManhole = info.endName,
             lengthMeters = info.lengthMeters
         )
-        if (launchedFromIme) {
-            // Seçimi kalıcı olarak sakla. Harita açıldığında Robot'un InputConnection'i
+        val returnToIme = launchedFromIme || ImeSelectionStore.isSelectionRequestActive(this)
+
+        if (returnToIme) {
+            // Seçimi kalıcı olarak sakla. Intent extra kaybolsa bile
+            // selection_request_active sayesinde bu blok kesin calisir.
+            // Harita açıldığında Robot'un InputConnection'i
             // geçici olarak düşebilir; bu nedenle değeri asla zaman aşımıyla silmiyoruz.
             ImeSelectionStore.save(this, payload.sectionNo)
             status.text = "${info.sectionNo} seçildi. Robot alanına dönülüyor..."
