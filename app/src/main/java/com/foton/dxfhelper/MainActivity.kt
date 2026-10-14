@@ -220,7 +220,17 @@ class MainActivity : AppCompatActivity() {
         )
 
         tools.addView(
-            button("KLAVYE") {
+            button("KLAVYEYİ ETKİNLEŞTİR") {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_INPUT_METHOD_SETTINGS
+                    )
+                )
+            }
+        )
+
+        tools.addView(
+            button("KLAVYE SEÇ") {
                 (
                     getSystemService(
                         Context.INPUT_METHOD_SERVICE
