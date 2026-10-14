@@ -1,25 +1,34 @@
-FOTON DXF Hat Seçici v0.1.0 - Parser Testi
-===========================================
-Kaynak: leda_atıksu(1).dxf
+FOTONMAP Hat Seçici v0.4.1 - AUDIT RAPORU
+============================================
 
-Parser sonucu:
-- 92 hat segmenti
-- 100 baca circle
+Kaynak proje:
+Foton-Hat-main.zip
+
+Statik kontrol:
+- AndroidManifest: IME servisi doğru BIND_INPUT_METHOD izniyle kayıtlı.
+- Accessibility servisi manifestte yok.
+- Eski Accessibility kaynak kodu temizlendi.
+- Eski DXF tablet parser'ı temizlendi.
+- FOTONMAP parser format version=1 doğruluyor.
+- FOTONMAP bounds ve segment varlığı doğrulanıyor.
+- IME seçim isteği SharedPreferences ile kalıcı.
+- Yeni seçim eski pending seçimi temizliyor.
+- Geri çıkış yarım seçim isteğini iptal ediyor.
+- Türkçe Q klavye tuşları mevcut.
+- `HARİTADAN HAT SEÇ` ve `SEÇİMİ YAZ` mevcut.
+- Pinch zoom, double tap zoom, +, -, SIĞDIR mevcut.
+- GitHub workflow Android 34 / Java 17 / Gradle 8.7 ile uyumlu ayarlı.
+
+Gerçek FOTONMAP kontrolü:
+leda_atıksu(1).fotonmap
+- 100 node
+- 91 segment
 - 197 text
-- 100 baca-geometri eşleşmesi
+- 88 iki-uç-isimli segment
+- 3 segment exporter tarafında eksik isimli.
+  Tablet fallback bunlardan A43-A42 hattındaki eksik A43 adını text yakınlığından
+  kurtarabilir.
 
-İlk doğrulanan hatlar:
-A41-A40 : 34.92 m
-A39-A38 : 9.92 m
-A38-A37 : 6.71 m
-A37-A36 : 8.87 m
-A36-A35 : 8.06 m
-A35-A34 : 8.75 m
-A34-A33 : 20.82 m
-A33-A32 : 14.83 m
-A32-A31 : 6.89 m
-A31-A30 : 4.86 m
-A23-A22 : 3.36 m
-A22-A21 : 3.87 m
-
-Not: Bu rapor Android UI derlemesi değil, DXF parse/geometri eşleştirme çekirdeğinin gerçek DXF üzerinde testidir.
+Not:
+Bu ortamda Android SDK/Gradle toolchain kurulu olmadığı için APK derlemesi burada
+çalıştırılmadı. GitHub Actions derlemesi nihai compile doğrulamasıdır.

@@ -1,58 +1,47 @@
-# FOTON DXF Hat Seçici v0.1.0
+# FOTONMAP Hat Seçici v0.4.1
 
-Android tablet için bağımsız DXF hat seçme yardımcısıdır. Mevcut Robot Kontrol Sistemi uygulamasının kaynak koduna dokunmaz.
+Android tablet için FOTONMAP tabanlı hat seçme yardımcısıdır.
+Robot Kontrol Sistemi'nin kaynak koduna dokunmaz.
 
-## Amaç
+## Güncel mimari
 
-- Proje DXF dosyasını tablette açmak
-- Hatlara dokunarak iki uçtaki baca adlarını DXF geometrisinden otomatik bulmak
-- `A41-A40` gibi Boru Kesit No üretmek
-- Geometrik hat uzunluğunu hesaplamak
-- Başlangıç / bitiş bacasını göstermek ve gerekirse ters çevirmek
-- Onaylanan hattı yeşil göstermek
-- Tamamlanan hatları DXF bazında tablette saklamak
-- Accessibility Service aktifse Robot Kontrol Sistemi içindeki `Boru Kesit No`, `Başlangıç Bacası`, `Bitiş Bacası`, `Boru Uzunluğu` alanlarına otomatik aktarmayı denemek
-- Otomatik aktarım mümkün değilse Boru Kesit No'yu panoya kopyalamak
+- AutoCAD / Civil 3D: `FOTONMAPEXPORT` ile `.fotonmap` üretilir.
+- Android tablet: `.fotonmap` doğrudan açılır; tablette DXF parser kullanılmaz.
+- FOTON Klavye: Türkçe Q klavye olarak normal yazı yazabilir.
+- `HARİTADAN HAT SEÇ`: seçilen hattın `A41-A40` benzeri kesit numarasını
+  Robot Kontrol Sistemi'ndeki aktif yazı alanına aktarır.
+- Tamamlanan hatlar yeşil tutulur.
+- Durum planı PDF olarak üretilebilir.
+- İnternet gerekmez.
 
-## Test edilen gerçek DXF
+## v0.4.1 audit düzeltmeleri
 
-`leda_atıksu(1).dxf` ile parser testi yapılmıştır:
+- v0.3.3 kalıcı seçim köprüsü korunur.
+- Yeni harita seçimi başlarken eski bekleyen kesit temizlenir.
+- Haritadan geri çıkılırsa yarım kalmış IME seçim isteği iptal edilir.
+- Activity tekrar kullanıldığında `launchedFromIme` yanlışlıkla true kalmaz.
+- IME batch edit işlemleri `finally` ile dengeli kapatılır.
+- Enter tuşunda gerçek `sendKeyEvent` sonucu kontrol edilir.
+- FOTONMAP'te yalnız bir ucu isimli hatlarda eksik uç için geometrik/text fallback denenir.
+- Format sürümü, bounds ve boş segment listesi doğrulanır.
+- Eski Accessibility servis kodu kaldırıldı.
+- Eski tablet-DXF parser kaldırıldı. Tablet artık yalnız FOTONMAP kullanır.
+- Zoom: pinch, çift dokunma, `+`, `-`, `SIĞDIR` devam eder.
+- FOTON Klavye Türkçe Q olarak kalıcı varsayılan klavye seçilebilir.
+  Android güvenlik modeli nedeniyle uygulama kendisini kullanıcı onayı olmadan
+  varsayılan klavye yapamaz; ilk kurulumda kullanıcı bir kez seçmelidir.
 
-- 92 seçilebilir hat segmenti
-- 100 CIRCLE
-- 197 TEXT
-- Örnek çözüm: `A41-A40`, uzunluk `34.92 m`
-- Örnek çözüm: `A39-A38`, uzunluk `9.92 m`
+## Test edilen FOTONMAP
 
-DXF dosyasındaki LINE uçlarının baca merkezlerine oturması bu dosyada doğrulanmıştır.
+`leda_atıksu(1).fotonmap`:
+- 100 node/baca
+- 91 tıklanabilir segment
+- 88 segment iki ucu isimli
+- A41-A40 = 34.92 m
+- A39-A38 = 9.92 m
 
-## Desteklenen DXF varlıkları
+## GitHub Actions
 
-- LINE
-- CIRCLE
-- TEXT
-- MTEXT
-- LWPOLYLINE
-- POLYLINE + VERTEX
-
-## Tablet kullanımı
-
-1. APK'yı kur.
-2. Uygulamada `ROBOT ERİŞİMİ` düğmesine basıp FOTON Robot Yardımcısı erişilebilirlik servisini aç.
-3. `DXF SEÇ` ile proje DXF'ini bir kez seç.
-4. Robot Kontrol Sistemi'nde `Boru Kesit No` alanına dokun.
-5. Android erişilebilirlik ağacı alanı görünür kılıyorsa FOTON DXF ekranı otomatik açılır.
-6. Hat üzerine dokun.
-7. Gerekirse `TERS ÇEVİR`.
-8. `ONAYLA`.
-9. Hat yeşil kalır ve bilgiler Robot uygulamasına aktarılmaya çalışılır.
-
-Not: Robot Kontrol Sistemi özel çizilmiş bir arayüz kullanıyor ve alanları Android Accessibility'ye göstermiyorsa otomatik tetikleme/yazma çalışmayabilir. DXF seçme ve yeşil ilerleme sistemi yine çalışır; Boru Kesit No panoya kopyalanır.
-
-## GitHub Actions ile APK
-
-Projeyi repo köküne yükleyin. `main` branch'e push edilince veya Actions ekranından elle çalıştırılınca:
-
-`FOTON-DXF-Hat-Secici-v0.1.0-debug.apk`
-
-artifact olarak üretilir.
+`main` branch push veya elle workflow çalıştırma sonucunda:
+`FOTONMAP-Hat-Secici-v0.4.1-debug.apk`
+üretilir.
