@@ -743,6 +743,11 @@ class FotonInputMethodService : InputMethodService() {
                         after
                     )
                 }
+
+                // runCatching bloğunun son ifadesi artık açıkça Unit.
+                // Kotlin böylece yukarıdaki if'i değer döndüren expression
+                // olarak yorumlayıp "else" istemiyor.
+                Unit
             }
         }
     }
