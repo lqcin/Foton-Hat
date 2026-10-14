@@ -1,16 +1,22 @@
 package com.foton.dxfhelper
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,6 +25,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -31,6 +38,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var confirmButton: Button
     private lateinit var undoButton: Button
     private lateinit var countLabel: TextView
+    private lateinit var locationLabel: TextView
+    private lateinit var focusButton: Button
+    private lateinit var routeBar: LinearLayout
+    private lateinit var routeLabel: TextView
+    private lateinit var routeCloseButton: Button
+
+    private lateinit var locationManager: LocationManager
+    private var lastLocation: Location? = null
+    private var locationUpdatesActive = false
 
     private var activeUri: Uri? = null
     private var activeName: String = ""
@@ -40,6 +56,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var completionStore: CompletionStore
     private var launchedFromIme: Boolean = false
     private val executor = Executors.newSingleThreadExecutor()
+
+    private val locationPermission =
+        registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { grants ->
+            val granted =
+                grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                    grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+            if (granted) {
+                startLocationUpdates()
+            } else {
+                updateLocationLabel(
+                    "Konum izni kapalı",
+                    Color.rgb(220, 130, 90)
+                )
+            }
+        }
 
     private val openMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -64,8 +98,14 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         completionStore = CompletionStore(this)
+        locationManager =
+            getSystemService(
+                Context.LOCATION_SERVICE
+            ) as LocationManager
+
         buildUi()
         handleIntent(intent)
+        ensureLocationPermission()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -87,7 +127,21 @@ class MainActivity : AppCompatActivity() {
         handleIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+
+        if (hasLocationPermission()) {
+            startLocationUpdates()
+        }
+    }
+
+    override fun onPause() {
+        stopLocationUpdates()
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        stopLocationUpdates()
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -125,6 +179,36 @@ class MainActivity : AppCompatActivity() {
         top.addView(button("+") { mapView.zoomIn() })
         top.addView(button("SIĞDIR") { mapView.resetView() })
 
+        focusButton =
+            button("◎ FOKUS") {
+                focusOnCurrentLocation()
+            }.apply {
+                isEnabled = false
+            }
+
+        top.addView(focusButton)
+
+        locationLabel =
+            TextView(this).apply {
+                setTextColor(
+                    Color.rgb(
+                        160,
+                        180,
+                        200
+                    )
+                )
+                textSize = 13f
+                setPadding(
+                    dp(8),
+                    0,
+                    dp(8),
+                    0
+                )
+                text = "GPS bekleniyor"
+            }
+
+        top.addView(locationLabel)
+
         fileLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 14f
@@ -148,10 +232,73 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(status)
 
+        routeBar =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+                gravity =
+                    Gravity.CENTER_VERTICAL
+                visibility =
+                    View.GONE
+                setPadding(
+                    dp(10),
+                    dp(4),
+                    dp(6),
+                    dp(4)
+                )
+                setBackgroundColor(
+                    Color.rgb(
+                        42,
+                        31,
+                        56
+                    )
+                )
+            }
+
+        routeLabel =
+            TextView(this).apply {
+                setTextColor(
+                    Color.rgb(
+                        226,
+                        204,
+                        255
+                    )
+                )
+                textSize = 14f
+                text = "Hedef yok"
+            }
+
+        routeBar.addView(
+            routeLabel,
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        )
+
+        routeCloseButton =
+            button("KAPAT") {
+                closeRouteGuide()
+            }
+
+        routeBar.addView(
+            routeCloseButton
+        )
+
+        root.addView(
+            routeBar
+        )
+
         mapView = DxfView(this).apply {
-            onSegmentSelected = { _, info ->
+            onSegmentSelected = { segment, info ->
                 currentInfo = info
+
+                routeTarget =
+                    segment
+
                 refreshSelection()
+                refreshRouteGuide()
             }
         }
         root.addView(mapView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -189,6 +336,7 @@ class MainActivity : AppCompatActivity() {
         status.text = "FOTONMAP okunuyor..."
         currentInfo = null
         activeDrawing = null
+        closeRouteGuide()
         refreshSelection()
 
         executor.execute {
@@ -217,19 +365,17 @@ class MainActivity : AppCompatActivity() {
                     // Local store yalnızca emniyet / eski sürüm fallback'i olarak kalır.
                     completionStore.save(uri, completed)
 
-                    // Eski formatta completed alanı yoksa mevcut yerel durumu dosyaya taşı.
-                    if (drawing.embeddedCompletedIds == null && completed.isNotEmpty()) {
-                        runCatching {
-                            FotonMapFileStore.writeCompleted(
-                                this,
-                                uri,
-                                completed
-                            )
-                        }
-                    }
+                    // Dosya sadece açıldığı için artık yeniden yazılmaz.
+                    // completed ilk kez ONAYLA / İŞARETİ KALDIR işleminde
+                    // aynı .fotonmap dosyasına eklenir.
 
                     mapView.drawing = drawing
                     mapView.completedIds = completed
+
+                    lastLocation?.let {
+                        updateLocationOverlay(it)
+                    }
+
                     updateCount()
                     val named = drawing.segments.count { it.fromName.isNotBlank() && it.toName.isNotBlank() }
                     status.text = "${drawing.segments.size} hat yüklendi • $named hattın iki baca adı hazır • hatta dokun."
@@ -238,6 +384,426 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "FOTONMAP okunamadı", Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    }
+
+    private val locationListener =
+        LocationListener { location ->
+            lastLocation = location
+            updateLocationOverlay(location)
+        }
+
+    private fun hasLocationPermission(): Boolean =
+        ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+    private fun ensureLocationPermission() {
+        if (hasLocationPermission()) {
+            startLocationUpdates()
+            return
+        }
+
+        locationPermission.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+        )
+    }
+
+    private fun startLocationUpdates() {
+        if (!hasLocationPermission()) {
+            return
+        }
+
+        stopLocationUpdates()
+
+        var requested = false
+
+        runCatching {
+            if (
+                locationManager.isProviderEnabled(
+                    LocationManager.GPS_PROVIDER
+                )
+            ) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    1000L,
+                    0.5f,
+                    locationListener
+                )
+
+                requested = true
+
+                locationManager
+                    .getLastKnownLocation(
+                        LocationManager.GPS_PROVIDER
+                    )
+                    ?.let {
+                        lastLocation = it
+                        updateLocationOverlay(it)
+                    }
+            }
+        }
+
+        runCatching {
+            if (
+                locationManager.isProviderEnabled(
+                    LocationManager.NETWORK_PROVIDER
+                )
+            ) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    2000L,
+                    1.0f,
+                    locationListener
+                )
+
+                requested = true
+
+                if (lastLocation == null) {
+                    locationManager
+                        .getLastKnownLocation(
+                            LocationManager.NETWORK_PROVIDER
+                        )
+                        ?.let {
+                            lastLocation = it
+                            updateLocationOverlay(it)
+                        }
+                }
+            }
+        }
+
+        locationUpdatesActive =
+            requested
+
+        if (!requested) {
+            updateLocationLabel(
+                "GPS kapalı",
+                Color.rgb(
+                    220,
+                    130,
+                    90
+                )
+            )
+        }
+    }
+
+    private fun stopLocationUpdates() {
+        if (
+            !::locationManager.isInitialized
+        ) return
+
+        if (
+            !locationUpdatesActive
+        ) return
+
+        runCatching {
+            locationManager.removeUpdates(
+                locationListener
+            )
+        }
+
+        locationUpdatesActive = false
+    }
+
+    private fun updateLocationOverlay(
+        location: Location
+    ) {
+        val accuracy =
+            if (
+                location.hasAccuracy()
+            ) {
+                location.accuracy
+            } else {
+                Float.NaN
+            }
+
+        val drawing =
+            activeDrawing
+
+        if (
+            drawing == null
+        ) {
+            mapView.locationAccuracyMeters =
+                accuracy.takeIf {
+                    it.isFinite()
+                }
+
+            showAccuracyOnly(accuracy)
+            return
+        }
+
+        if (
+            !drawing.hasProjectedOrigin
+        ) {
+            mapView.userLocation = null
+            focusButton.isEnabled = false
+
+            updateLocationLabel(
+                accuracyText(accuracy) +
+                    " • FOTONMAP koordinatı uygun değil",
+                Color.rgb(
+                    220,
+                    170,
+                    80
+                )
+            )
+
+            return
+        }
+
+        val projected =
+            ItrfTmProjection.forward(
+                latitudeDeg =
+                    location.latitude,
+                longitudeDeg =
+                    location.longitude,
+                centralMeridianDeg =
+                    drawing.centralMeridian
+            )
+
+        val local =
+            Pt(
+                projected.easting -
+                    drawing.originX,
+                projected.northing -
+                    drawing.originY
+            )
+
+        mapView.userLocation =
+            local
+
+        mapView.locationAccuracyMeters =
+            accuracy.takeIf {
+                it.isFinite()
+            }
+
+        refreshRouteGuide()
+
+        focusButton.isEnabled =
+            true
+
+        val outside =
+            local.x <
+                drawing.minX ||
+                local.x >
+                drawing.maxX ||
+                local.y <
+                drawing.minY ||
+                local.y >
+                drawing.maxY
+
+        val text =
+            buildString {
+                append(
+                    accuracyText(
+                        accuracy
+                    )
+                )
+
+                drawing.epsg?.let {
+                    append(" • EPSG:")
+                    append(it)
+                }
+
+                if (outside) {
+                    append(" • plan dışında")
+                }
+            }
+
+        updateLocationLabel(
+            text,
+            accuracyColor(
+                accuracy
+            )
+        )
+    }
+
+    private fun showAccuracyOnly(
+        accuracy: Float
+    ) {
+        updateLocationLabel(
+            accuracyText(
+                accuracy
+            ),
+            accuracyColor(
+                accuracy
+            )
+        )
+    }
+
+    private fun accuracyText(
+        accuracy: Float
+    ): String =
+        if (
+            accuracy.isFinite()
+        ) {
+            "GPS ±" +
+                String.format(
+                    Locale.US,
+                    "%.1f",
+                    accuracy
+                )
+                .replace(
+                    '.',
+                    ','
+                ) +
+                " m"
+        } else {
+            "GPS doğruluğu bilinmiyor"
+        }
+
+    private fun accuracyColor(
+        accuracy: Float
+    ): Int =
+        when {
+            !accuracy.isFinite() ->
+                Color.rgb(
+                    160,
+                    180,
+                    200
+                )
+
+            accuracy <= 5f ->
+                Color.rgb(
+                    80,
+                    220,
+                    140
+                )
+
+            accuracy <= 12f ->
+                Color.rgb(
+                    235,
+                    185,
+                    70
+                )
+
+            else ->
+                Color.rgb(
+                    230,
+                    105,
+                    95
+                )
+        }
+
+    private fun updateLocationLabel(
+        text: String,
+        color: Int
+    ) {
+        if (
+            !::locationLabel.isInitialized
+        ) return
+
+        locationLabel.text =
+            text
+
+        locationLabel.setTextColor(
+            color
+        )
+    }
+
+    private fun focusOnCurrentLocation() {
+        if (
+            !hasLocationPermission()
+        ) {
+            ensureLocationPermission()
+            return
+        }
+
+        if (
+            lastLocation == null
+        ) {
+            Toast.makeText(
+                this,
+                "GPS konumu henüz alınmadı.",
+                Toast.LENGTH_SHORT
+            ).show()
+
+            return
+        }
+
+        if (
+            !mapView.focusOnUserLocation()
+        ) {
+            Toast.makeText(
+                this,
+                "Konum FOTONMAP üzerine yerleştirilemedi.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun refreshRouteGuide() {
+        if (
+            !::routeBar.isInitialized ||
+            !::mapView.isInitialized
+        ) return
+
+        val info =
+            currentInfo
+
+        val target =
+            mapView.routeTarget
+
+        if (
+            info == null ||
+            target == null ||
+            info.segment.id != target.id
+        ) {
+            routeBar.visibility =
+                View.GONE
+
+            return
+        }
+
+        routeBar.visibility =
+            View.VISIBLE
+
+        val distance =
+            mapView.routeDistanceMeters()
+
+        routeLabel.text =
+            if (distance == null) {
+                "${info.sectionNo}   •   GPS bekleniyor"
+            } else {
+                val value =
+                    String.format(
+                        Locale.US,
+                        "%.1f",
+                        distance
+                    )
+                        .replace(
+                            '.',
+                            ','
+                        )
+
+                if (distance <= 3.0) {
+                    "${info.sectionNo}   •   $value m   •   YAKLAŞTIN"
+                } else {
+                    "${info.sectionNo}   •   $value m"
+                }
+            }
+    }
+
+    private fun closeRouteGuide() {
+        if (
+            ::mapView.isInitialized
+        ) {
+            mapView.clearRouteGuide()
+        }
+
+        if (
+            ::routeBar.isInitialized
+        ) {
+            routeBar.visibility =
+                View.GONE
         }
     }
 

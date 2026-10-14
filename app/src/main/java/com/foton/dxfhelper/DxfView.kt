@@ -3,6 +3,7 @@ package com.foton.dxfhelper
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.PointF
 import android.util.AttributeSet
@@ -10,6 +11,8 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.min
 
 class DxfView @JvmOverloads constructor(
@@ -22,6 +25,7 @@ class DxfView @JvmOverloads constructor(
             field = value
             resolver = value?.let { LineResolver(it) }
             selected = null
+            routeTarget = null
             fitInitialized = false
             invalidate()
         }
@@ -35,7 +39,25 @@ class DxfView @JvmOverloads constructor(
     var selected: DxfSegment? = null
         private set
 
+    var routeTarget: DxfSegment? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     var onSegmentSelected: ((DxfSegment, SelectedLineInfo) -> Unit)? = null
+
+    var userLocation: Pt? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var locationAccuracyMeters: Float? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     private var resolver: LineResolver? = null
 
@@ -75,6 +97,75 @@ class DxfView @JvmOverloads constructor(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(238, 244, 250)
     }
+
+    private val locationAccuracyPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(
+                46,
+                58,
+                150,
+                255
+            )
+            style = Paint.Style.FILL
+        }
+
+    private val locationAccuracyStroke =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(
+                180,
+                58,
+                150,
+                255
+            )
+            strokeWidth = dp(1.2f)
+            style = Paint.Style.STROKE
+        }
+
+    private val locationDotPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(
+                45,
+                140,
+                255
+            )
+            style = Paint.Style.FILL
+        }
+
+    private val locationDotStroke =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            strokeWidth = dp(2.0f)
+            style = Paint.Style.STROKE
+        }
+
+    private val routePaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(
+                191,
+                125,
+                255
+            )
+            strokeWidth = dp(2.6f)
+            style = Paint.Style.STROKE
+            pathEffect =
+                DashPathEffect(
+                    floatArrayOf(
+                        dp(10f),
+                        dp(7f)
+                    ),
+                    0f
+                )
+        }
+
+    private val routeTargetPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(
+                220,
+                180,
+                255
+            )
+            style = Paint.Style.FILL
+        }
 
     /**
      * Eski sürümde pinch zoom odagi ekran merkezini hesaba katmadan
@@ -147,22 +238,69 @@ class DxfView @JvmOverloads constructor(
             val b = worldToScreen(seg.b, d)
 
             val paint = when {
-                selected?.id == seg.id -> selectedPaint
-                completedIds.contains(seg.id) -> completedPaint
-                else -> linePaint
+                selected?.id == seg.id ->
+                    selectedPaint
+
+                completedIds.contains(seg.id) ->
+                    completedPaint
+
+                else -> {
+                    linePaint.color =
+                        SourceColor.resolve(
+                            seg.sourceColorRgb,
+                            seg.sourceColorAci,
+                            Color.rgb(118, 158, 188)
+                        )
+                    linePaint
+                }
             }
-            canvas.drawLine(a.x, a.y, b.x, b.y, paint)
+
+            canvas.drawLine(
+                a.x,
+                a.y,
+                b.x,
+                b.y,
+                paint
+            )
         }
 
         d.circles.forEach { circle ->
-            val c = worldToScreen(circle.center, d)
-            val rr = (circle.radius * baseScale * userScale)
+            val c =
+                worldToScreen(
+                    circle.center,
+                    d
+                )
+
+            val rr =
+                (
+                    circle.radius *
+                    baseScale *
+                    userScale
+                )
                 .toFloat()
-                .coerceIn(dp(1.5f), dp(12f))
-            canvas.drawCircle(c.x, c.y, rr, circlePaint)
+                .coerceIn(
+                    dp(1.5f),
+                    dp(12f)
+                )
+
+            circlePaint.color =
+                SourceColor.resolve(
+                    circle.sourceColorRgb,
+                    circle.sourceColorAci,
+                    Color.rgb(132, 174, 201)
+                )
+
+            canvas.drawCircle(
+                c.x,
+                c.y,
+                rr,
+                circlePaint
+            )
         }
 
+        drawRouteGuide(canvas, d)
         drawTexts(canvas, d)
+        drawUserLocation(canvas, d)
     }
 
     private fun drawTexts(canvas: Canvas, d: DxfDrawing) {
@@ -179,7 +317,17 @@ class DxfView @JvmOverloads constructor(
             }
 
             textPaint.textSize =
-                if (looksLikeManhole) size.coerceAtLeast(dp(9f)) else size
+                if (looksLikeManhole)
+                    size.coerceAtLeast(dp(9f))
+                else
+                    size
+
+            textPaint.color =
+                SourceColor.resolve(
+                    t.sourceColorRgb,
+                    t.sourceColorAci,
+                    Color.rgb(238, 244, 250)
+                )
 
             canvas.save()
             canvas.rotate(
@@ -195,6 +343,236 @@ class DxfView @JvmOverloads constructor(
             )
             canvas.restore()
         }
+    }
+
+    private fun drawRouteGuide(
+        canvas: Canvas,
+        d: DxfDrawing
+    ) {
+        val location =
+            userLocation ?: return
+
+        val target =
+            routeTarget ?: return
+
+        val nearest =
+            nearestPointOnSegment(
+                location,
+                target
+            )
+
+        val from =
+            worldToScreen(
+                location,
+                d
+            )
+
+        val to =
+            worldToScreen(
+                nearest,
+                d
+            )
+
+        canvas.drawLine(
+            from.x,
+            from.y,
+            to.x,
+            to.y,
+            routePaint
+        )
+
+        canvas.drawCircle(
+            to.x,
+            to.y,
+            dp(5f),
+            routeTargetPaint
+        )
+    }
+
+    fun routeDistanceMeters(): Double? {
+        val location =
+            userLocation ?: return null
+
+        val target =
+            routeTarget ?: return null
+
+        val nearest =
+            nearestPointOnSegment(
+                location,
+                target
+            )
+
+        return hypot(
+            location.x - nearest.x,
+            location.y - nearest.y
+        )
+    }
+
+    fun clearRouteGuide() {
+        routeTarget = null
+        invalidate()
+    }
+
+    private fun nearestPointOnSegment(
+        p: Pt,
+        segment: DxfSegment
+    ): Pt {
+        val ax = segment.a.x
+        val ay = segment.a.y
+        val bx = segment.b.x
+        val by = segment.b.y
+
+        val vx =
+            bx - ax
+
+        val vy =
+            by - ay
+
+        val len2 =
+            vx * vx +
+                vy * vy
+
+        if (
+            len2 <= 0.000000001
+        ) {
+            return segment.a
+        }
+
+        val t =
+            (
+                (
+                    (p.x - ax) * vx +
+                    (p.y - ay) * vy
+                ) / len2
+            )
+                .coerceIn(
+                    0.0,
+                    1.0
+                )
+
+        return Pt(
+            ax + t * vx,
+            ay + t * vy
+        )
+    }
+
+    private fun drawUserLocation(
+        canvas: Canvas,
+        d: DxfDrawing
+    ) {
+        val location =
+            userLocation ?: return
+
+        val p =
+            worldToScreen(
+                location,
+                d
+            )
+
+        val accuracy =
+            locationAccuracyMeters
+                ?.takeIf {
+                    it.isFinite() &&
+                        it > 0f
+                }
+
+        if (accuracy != null) {
+            val radius =
+                (
+                    accuracy *
+                        baseScale *
+                        userScale
+                    )
+                    .coerceIn(
+                        dp(5f),
+                        dp(150f)
+                    )
+
+            canvas.drawCircle(
+                p.x,
+                p.y,
+                radius,
+                locationAccuracyPaint
+            )
+
+            canvas.drawCircle(
+                p.x,
+                p.y,
+                radius,
+                locationAccuracyStroke
+            )
+        }
+
+        canvas.drawCircle(
+            p.x,
+            p.y,
+            dp(7f),
+            locationDotPaint
+        )
+
+        canvas.drawCircle(
+            p.x,
+            p.y,
+            dp(7f),
+            locationDotStroke
+        )
+
+        canvas.drawCircle(
+            p.x,
+            p.y,
+            dp(2.3f),
+            locationDotStroke
+        )
+    }
+
+    fun focusOnUserLocation(): Boolean {
+        val d =
+            drawing ?: return false
+
+        val location =
+            userLocation ?: return false
+
+        if (
+            width <= 0 ||
+            height <= 0
+        ) return false
+
+        // Fokus sırasında harita yeterince okunabilir olsun.
+        userScale =
+            max(
+                userScale,
+                4.0f
+            )
+            .coerceAtMost(
+                maxUserScale
+            )
+
+        val s =
+            baseScale *
+                userScale
+
+        val c =
+            d.center
+
+        // worldToScreen sonucu ekran merkezine gelsin.
+        panX =
+            -(
+                (
+                    location.x -
+                        c.x
+                    ) * s
+                ).toFloat()
+
+        panY =
+            (
+                (
+                    location.y -
+                        c.y
+                    ) * s
+                ).toFloat()
+
+        invalidate()
+        return true
     }
 
     fun resetView() {

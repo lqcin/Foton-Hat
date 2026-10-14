@@ -59,7 +59,12 @@ object MapPdfExporter {
             canvas.drawText(mapName, 30f, 46f, subPaint)
             val date = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale("tr", "TR")).format(Date())
             canvas.drawText(date, 650f, 30f, subPaint)
-            canvas.drawText("Yeşil: tamamlandı   Gri: bekliyor", 650f, 46f, subPaint)
+            canvas.drawText(
+                "Yeşil: görüntülendi   Diğer renkler: kaynak CAD rengi",
+                570f,
+                46f,
+                subPaint
+            )
 
             val left = 30f
             val top = 62f
@@ -77,13 +82,61 @@ object MapPdfExporter {
             fun sy(y: Double): Float = oy + drawH - ((y - drawing.minY) * scale).toFloat()
 
             drawing.segments.forEach { seg ->
-                val paint = if (completedIds.contains(seg.id)) donePaint else normalPaint
-                canvas.drawLine(sx(seg.a.x), sy(seg.a.y), sx(seg.b.x), sy(seg.b.y), paint)
+                val paint =
+                    if (
+                        completedIds.contains(seg.id)
+                    ) {
+                        donePaint
+                    } else {
+                        normalPaint.color =
+                            SourceColor.forPdf(
+                                seg.sourceColorRgb,
+                                seg.sourceColorAci,
+                                Color.rgb(
+                                    105,
+                                    125,
+                                    142
+                                )
+                            )
+
+                        normalPaint
+                    }
+
+                canvas.drawLine(
+                    sx(seg.a.x),
+                    sy(seg.a.y),
+                    sx(seg.b.x),
+                    sy(seg.b.y),
+                    paint
+                )
             }
 
             drawing.circles.forEach { c ->
-                val r = (c.radius * scale).toFloat().coerceIn(0.8f, 4.5f)
-                canvas.drawCircle(sx(c.center.x), sy(c.center.y), r, circlePaint)
+                val r =
+                    (c.radius * scale)
+                        .toFloat()
+                        .coerceIn(
+                            0.8f,
+                            4.5f
+                        )
+
+                circlePaint.color =
+                    SourceColor.forPdf(
+                        c.sourceColorRgb,
+                        c.sourceColorAci,
+                        Color.rgb(
+                            80,
+                            100,
+                            115
+                        )
+                    )
+
+                canvas.drawCircle(
+                    sx(c.center.x),
+                    sy(c.center.y),
+                    r,
+                    circlePaint
+                )
             }
 
             val labelPattern = Regex("^[A-Za-zÇĞİÖŞÜçğıöşü]+[0-9]+(?:-[0-9]+)*$")
@@ -91,7 +144,23 @@ object MapPdfExporter {
                 .filter { labelPattern.matches(it.text.trim()) }
                 .distinctBy { "${it.text.trim()}@${"%.3f".format(Locale.US, it.point.x)}:${"%.3f".format(Locale.US, it.point.y)}" }
                 .forEach { t ->
-                    canvas.drawText(t.text.trim(), sx(t.point.x) + 2f, sy(t.point.y) - 2f, labelPaint)
+                    labelPaint.color =
+                        SourceColor.forPdf(
+                            t.sourceColorRgb,
+                            t.sourceColorAci,
+                            Color.rgb(
+                                40,
+                                50,
+                                62
+                            )
+                        )
+
+                    canvas.drawText(
+                        t.text.trim(),
+                        sx(t.point.x) + 2f,
+                        sy(t.point.y) - 2f,
+                        labelPaint
+                    )
                 }
 
             canvas.drawText(

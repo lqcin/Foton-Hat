@@ -14,7 +14,9 @@ data class DxfSegment(
     val b: Pt,
     val fromName: String = "",
     val toName: String = "",
-    val lengthOverride: Double? = null
+    val lengthOverride: Double? = null,
+    val sourceColorRgb: Int? = null,
+    val sourceColorAci: Int? = null
 ) {
     val length: Double get() = lengthOverride ?: a.distanceTo(b)
 }
@@ -23,7 +25,9 @@ data class DxfCircle(
     val handle: String,
     val layer: String,
     val center: Pt,
-    val radius: Double
+    val radius: Double,
+    val sourceColorRgb: Int? = null,
+    val sourceColorAci: Int? = null
 )
 
 data class DxfText(
@@ -32,7 +36,9 @@ data class DxfText(
     val point: Pt,
     val text: String,
     val height: Double,
-    val rotation: Double = 0.0
+    val rotation: Double = 0.0,
+    val sourceColorRgb: Int? = null,
+    val sourceColorAci: Int? = null
 )
 
 data class DxfDrawing(
@@ -45,10 +51,21 @@ data class DxfDrawing(
     val maxY: Double,
     val sourceName: String = "",
     val formatVersion: Int = 1,
+    // AutoCAD gerçek koordinat başlangıcı.
+    val originX: Double = 0.0,
+    val originY: Double = 0.0,
+    val coordinateSystem: String = "",
+    val epsg: Int? = null,
+    val centralMeridian: Double = 30.0,
     // null = eski .fotonmap, henüz completed alanı yok.
     // emptySet = completed alanı var ama henüz tamamlanan hat yok.
     val embeddedCompletedIds: Set<String>? = null
 ) {
+    val hasProjectedOrigin: Boolean
+        get() =
+            originX in 100000.0..900000.0 &&
+                originY in 3000000.0..6000000.0
+
     val width: Double get() = (maxX - minX).coerceAtLeast(1.0)
     val height: Double get() = (maxY - minY).coerceAtLeast(1.0)
     val center: Pt get() = Pt((minX + maxX) / 2.0, (minY + maxY) / 2.0)
