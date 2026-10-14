@@ -304,6 +304,11 @@ class FotonInputMethodService : InputMethodService() {
                         ic.deleteSurroundingText(before, after)
                     }
                 }
+
+                // runCatching bloğunun son ifadesini açıkça Unit yap.
+                // Böylece yukarıdaki if/else Kotlin tarafından değer döndüren
+                // bir expression gibi yorumlanmaz.
+                Unit
             } finally {
                 if (batching) ic.endBatchEdit()
             }
