@@ -49,6 +49,12 @@ class FotonInputMethodService : InputMethodService() {
         pendingText = ImeSelectionStore.peek(this)
     }
 
+    /**
+     * Tablet yatay modda Android'in tam ekran "extract editor" açmasını engeller.
+     * Robot Kontrol Sistemi görünür kalır, FOTON Klavye yalnızca altta sabit durur.
+     */
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
     override fun onDestroy() {
         if (ref?.get() === this) ref = null
         super.onDestroy()
