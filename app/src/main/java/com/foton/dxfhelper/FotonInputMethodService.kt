@@ -3,248 +3,436 @@ package com.foton.dxfhelper
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
-import android.view.View
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import java.lang.ref.WeakReference
 import java.util.Locale
 
 /**
- * FOTON Klavye v0.4
+ * FOTON Klavye v0.5
  *
- * - Android'de varsayilan klavye olarak sabit kullanilabilir.
- * - Normal yazi yazabilir (Turkce Q).
- * - Haritadan hat secme FOTON klavyenin icindedir.
- * - Haritadan gelen secim kalici bekleyen deger olarak tutulur.
- * - Robot uygulamasi haritadan donuste editor odagini kaybetse bile secim silinmez.
+ * Amaç:
+ * - Normal Türkçe Q klavye olarak kullanılabilsin.
+ * - Haritadan hat seçimi aynı klavyenin içinden açılsın.
+ * - Haritada seçilen son kesit klavyenin üstünde büyük ve görünür dursun.
+ * - Kullanıcı "A41-A42 YAZ" butonuna dokunduğunda kesit numarası,
+ *   normal FOTON tuşları çalıştığı gibi karakter karakter yazılsın.
  */
 class FotonInputMethodService : InputMethodService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var pendingText: String? = null
-    private var retryToken = 0
 
-    private var pendingLabel: TextView? = null
-    private var writeButton: Button? = null
+    private var lastSectionLabel: TextView? = null
+    private var lastSectionButton: Button? = null
     private var shiftButton: Button? = null
-    private val letterButtons = mutableListOf<Pair<Button, String>>()
+
+    private val letterButtons =
+        mutableListOf<Pair<Button, String>>()
 
     private var caps = true
-    private val tr = Locale("tr", "TR")
 
-    override fun onCreate() {
-        super.onCreate()
-        ref = WeakReference(this)
-        pendingText = ImeSelectionStore.peek(this)
-    }
+    private val tr =
+        Locale("tr", "TR")
 
-    /**
-     * Tablet yatay modda Android'in tam ekran "extract editor" açmasını engeller.
-     * Robot Kontrol Sistemi görünür kalır, FOTON Klavye yalnızca altta sabit durur.
-     */
-    override fun onEvaluateFullscreenMode(): Boolean = false
+    override fun onEvaluateFullscreenMode(): Boolean =
+        false
 
-    override fun onDestroy() {
-        if (ref?.get() === this) ref = null
-        super.onDestroy()
-    }
-
-    override fun onCreateInputView(): View {
+    override fun onCreateInputView(): android.view.View {
         letterButtons.clear()
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(12, 24, 38))
-            setPadding(dp(8), dp(5), dp(8), dp(6))
-        }
+        val root =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
 
-        // Üst durum satırı
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+                setPadding(
+                    dp(8),
+                    dp(6),
+                    dp(8),
+                    dp(8)
+                )
 
-        header.addView(TextView(this).apply {
-            text = "FOTON KLAVYE"
-            setTextColor(Color.WHITE)
-            textSize = 13f
-        }, LinearLayout.LayoutParams(0, dp(26), 1f))
-
-        pendingLabel = TextView(this).apply {
-            setTextColor(Color.rgb(102, 230, 160))
-            textSize = 13f
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-        }
-        header.addView(pendingLabel, LinearLayout.LayoutParams(0, dp(26), 1f))
-        root.addView(header)
-
-        // FOTON'a özel aksiyonlar
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        actionRow.addView(actionButton("HARİTADAN HAT SEÇ") {
-            openMapPicker()
-        }, weightParams(1.65f, 50))
-
-        writeButton = actionButton("SEÇİMİ YAZ") {
-            loadPending()
-            if (!tryWritePendingAsHardwareKeys(showFailure = true)) {
-                Toast.makeText(
-                    this,
-                    "Aktif alana donanım tuşu olarak yazılamadı. Boru Kesit No alanını tekrar seçip yeniden dene.",
-                    Toast.LENGTH_LONG
-                ).show()
+                background =
+                    roundedBg(
+                        C_BG,
+                        0f
+                    )
             }
-        }.also {
-            actionRow.addView(it, weightParams(1.0f, 50))
-        }
 
-        actionRow.addView(actionButton("TEMİZLE") {
-            clearEditorText()
-        }, weightParams(0.72f, 50))
+        addHeader(root)
+        addLastSectionCard(root)
+        addActionRow(root)
 
-        actionRow.addView(actionButton("⌨") {
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                .showInputMethodPicker()
-        }, LinearLayout.LayoutParams(dp(58), dp(50)))
-
-        root.addView(actionRow)
-
-        // Sayılar
         addKeyRow(
             root,
-            listOf("1","2","3","4","5","6","7","8","9","0","-","/"),
+            listOf(
+                "1","2","3","4","5","6",
+                "7","8","9","0","-","/"
+            ),
             letters = false
         )
 
-        // Türkçe Q
         addKeyRow(
             root,
-            listOf("Q","W","E","R","T","Y","U","I","O","P","Ğ","Ü"),
-            letters = true
-        )
-        addKeyRow(
-            root,
-            listOf("A","S","D","F","G","H","J","K","L","Ş","İ"),
-            letters = true
-        )
-        addKeyRow(
-            root,
-            listOf("Z","X","C","V","B","N","M","Ö","Ç",".",","),
+            listOf(
+                "Q","W","E","R","T","Y",
+                "U","I","O","P","Ğ","Ü"
+            ),
             letters = true
         )
 
-        // Alt kontrol satırı
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        addKeyRow(
+            root,
+            listOf(
+                "A","S","D","F","G","H",
+                "J","K","L","Ş","İ"
+            ),
+            letters = true
+        )
 
-        shiftButton = keyButton("⇧ ABC", dp(50), 15f) {
-            caps = !caps
-            updateLetterCase()
-        }.also { bottom.addView(it, weightParams(0.75f, 50)) }
+        addKeyRow(
+            root,
+            listOf(
+                "Z","X","C","V","B","N",
+                "M","Ö","Ç",".",","
+            ),
+            letters = true
+        )
 
-        bottom.addView(keyButton("BOŞLUK", dp(50), 15f) {
-            commit(" ")
-        }, weightParams(2.2f, 50))
+        addBottomRow(root)
 
-        val back = keyButton("⌫", dp(50), 20f) {
-            currentInputConnection?.deleteSurroundingText(1, 0)
-        }.apply {
-            setOnLongClickListener {
-                currentInputConnection?.deleteSurroundingText(10, 0)
-                true
-            }
-        }
-        bottom.addView(back, weightParams(0.70f, 50))
-
-        bottom.addView(keyButton("ENTER", dp(50), 14f) {
-            sendEnter()
-        }, weightParams(0.85f, 50))
-
-        root.addView(bottom)
-
-        loadPending()
-        refreshPendingUi()
+        refreshLastSectionUi()
         updateLetterCase()
-        schedulePendingCommit()
-        return root
-    }
 
-    override fun onStartInput(
-        attribute: android.view.inputmethod.EditorInfo?,
-        restarting: Boolean
-    ) {
-        super.onStartInput(attribute, restarting)
-        loadPending()
-        schedulePendingCommit()
+        return root
     }
 
     override fun onStartInputView(
         info: android.view.inputmethod.EditorInfo?,
         restarting: Boolean
     ) {
-        super.onStartInputView(info, restarting)
-        loadPending()
-        refreshPendingUi()
-        schedulePendingCommit()
+        super.onStartInputView(
+            info,
+            restarting
+        )
+
+        refreshLastSectionUi()
     }
 
     override fun onWindowShown() {
         super.onWindowShown()
-        loadPending()
-        refreshPendingUi()
-        schedulePendingCommit()
+        refreshLastSectionUi()
     }
 
-    fun notifySelectionReady(sectionNo: String) {
-        if (sectionNo.isBlank()) return
+    private fun addHeader(
+        root: LinearLayout
+    ) {
+        val header =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
 
-        pendingText = sectionNo
-        ImeSelectionStore.save(this, sectionNo)
-        refreshPendingUi()
+                gravity =
+                    Gravity.CENTER_VERTICAL
 
-        retryToken++
-        val token = retryToken
+                setPadding(
+                    dp(4),
+                    0,
+                    dp(4),
+                    0
+                )
+            }
 
-        // Robot activity yeniden öne gelirken birkaç kez dene.
-        listOf(250L, 550L, 950L, 1500L, 2400L, 3600L).forEach { delay ->
-            handler.postDelayed({ tryCommit(token) }, delay)
-        }
+        header.addView(
+            TextView(this).apply {
+                text = "FOTON"
 
-        handler.postDelayed({
-            runCatching { requestShowSelf(0) }
-        }, 400L)
-    }
+                setTextColor(
+                    C_TEXT
+                )
 
-    private fun openMapPicker() {
-        // v0.3.3 köprüsü: Intent extra kaybolsa bile istek kalıcıdır.
-        ImeSelectionStore.beginSelectionRequest(this)
-        refreshPendingUi()
+                textSize = 16f
 
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+            },
+            LinearLayout.LayoutParams(
+                0,
+                dp(32),
+                1f
             )
-            putExtra(MainActivity.EXTRA_FROM_IME, true)
-        }
-        startActivity(intent)
+        )
+
+        header.addView(
+            TextView(this).apply {
+                text =
+                    "Hat Seçici Klavye"
+
+                setTextColor(
+                    C_MUTED
+                )
+
+                textSize = 12f
+
+                gravity =
+                    Gravity.END or
+                    Gravity.CENTER_VERTICAL
+            },
+            LinearLayout.LayoutParams(
+                0,
+                dp(32),
+                1f
+            )
+        )
+
+        root.addView(header)
+    }
+
+    private fun addLastSectionCard(
+        root: LinearLayout
+    ) {
+        val card =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+
+                setPadding(
+                    dp(10),
+                    dp(5),
+                    dp(7),
+                    dp(5)
+                )
+
+                background =
+                    roundedBg(
+                        C_PANEL,
+                        dpF(12f)
+                    )
+            }
+
+        val textBox =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+
+        textBox.addView(
+            TextView(this).apply {
+                text =
+                    "SON SEÇİLEN HAT"
+
+                setTextColor(
+                    C_MUTED
+                )
+
+                textSize = 10f
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+            }
+        )
+
+        lastSectionLabel =
+            TextView(this).apply {
+                text =
+                    "Henüz seçim yok"
+
+                setTextColor(
+                    C_MUTED
+                )
+
+                textSize = 20f
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        textBox.addView(
+            lastSectionLabel
+        )
+
+        card.addView(
+            textBox,
+            LinearLayout.LayoutParams(
+                0,
+                dp(52),
+                1f
+            )
+        )
+
+        lastSectionButton =
+            Button(this).apply {
+                text = "HAT YOK"
+
+                isAllCaps = false
+
+                textSize = 15f
+
+                setTextColor(
+                    Color.WHITE
+                )
+
+                setTypeface(
+                    typeface,
+                    Typeface.BOLD
+                )
+
+                minHeight = 0
+                minimumHeight = 0
+                minWidth = 0
+                minimumWidth = 0
+
+                setPadding(
+                    dp(10),
+                    0,
+                    dp(10),
+                    0
+                )
+
+                background =
+                    roundedBg(
+                        C_GREEN,
+                        dpF(10f)
+                    )
+
+                setOnClickListener {
+                    performHapticFeedback(
+                        HapticFeedbackConstants.KEYBOARD_TAP
+                    )
+
+                    val section =
+                        ImeSelectionStore
+                            .getLastSection(
+                                this@FotonInputMethodService
+                            )
+
+                    if (
+                        section.isNullOrBlank()
+                    ) {
+                        Toast.makeText(
+                            this@FotonInputMethodService,
+                            "Önce haritadan bir hat seç.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        typeSectionLikeNormalKeys(
+                            section
+                        )
+                    }
+                }
+            }
+
+        card.addView(
+            lastSectionButton,
+            LinearLayout.LayoutParams(
+                dp(180),
+                dp(48)
+            ).apply {
+                setMargins(
+                    dp(6),
+                    0,
+                    0,
+                    0
+                )
+            }
+        )
+
+        root.addView(
+            card,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(
+                    0,
+                    0,
+                    0,
+                    dp(5)
+                )
+            }
+        )
+    }
+
+    private fun addActionRow(
+        root: LinearLayout
+    ) {
+        val row =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        row.addView(
+            actionButton(
+                "HARİTADAN HAT SEÇ",
+                C_BLUE
+            ) {
+                openMapPicker()
+            },
+            weightedParams(
+                1.6f,
+                47
+            )
+        )
+
+        row.addView(
+            actionButton(
+                "TEMİZLE",
+                C_PANEL_ALT
+            ) {
+                clearEditorText()
+            },
+            weightedParams(
+                0.72f,
+                47
+            )
+        )
+
+        row.addView(
+            actionButton(
+                "KLAVYE",
+                C_PANEL_ALT
+            ) {
+                (
+                    getSystemService(
+                        Context.INPUT_METHOD_SERVICE
+                    )
+                    as InputMethodManager
+                ).showInputMethodPicker()
+            },
+            weightedParams(
+                0.72f,
+                47
+            )
+        )
+
+        root.addView(row)
     }
 
     private fun addKeyRow(
@@ -252,332 +440,593 @@ class FotonInputMethodService : InputMethodService() {
         labels: List<String>,
         letters: Boolean
     ) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        val row =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
 
         labels.forEach { raw ->
-            val button = keyButton(raw, dp(46), 17f) {
-                val text = if (letters) {
-                    if (caps) raw.uppercase(tr) else raw.lowercase(tr)
-                } else raw
-                commit(text)
+            val button =
+                keyButton(
+                    raw,
+                    C_KEY,
+                    16f
+                ) {
+                    val value =
+                        if (letters) {
+                            if (caps) {
+                                raw.uppercase(tr)
+                            } else {
+                                raw.lowercase(tr)
+                            }
+                        } else {
+                            raw
+                        }
+
+                    commit(value)
+                }
+
+            if (letters) {
+                letterButtons +=
+                    button to raw
             }
-            if (letters) letterButtons += button to raw
-            row.addView(button, weightParams(1f, 46))
+
+            row.addView(
+                button,
+                weightedParams(
+                    1f,
+                    44
+                )
+            )
         }
 
         root.addView(row)
     }
 
-    private fun updateLetterCase() {
-        letterButtons.forEach { (button, raw) ->
-            button.text = if (caps) raw.uppercase(tr) else raw.lowercase(tr)
-        }
-        shiftButton?.text = if (caps) "⇧ ABC" else "⇧ abc"
-    }
+    private fun addBottomRow(
+        root: LinearLayout
+    ) {
+        val row =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
 
-    private fun commit(text: String) {
-        currentInputConnection?.commitText(text, 1)
-    }
-
-    private fun sendEnter() {
-        val ic = currentInputConnection ?: return
-        val sent = runCatching {
-            val down = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-            val up = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-            down || up
-        }.getOrDefault(false)
-
-        if (!sent) ic.commitText("\n", 1)
-    }
-
-    private fun clearEditorText() {
-        val ic = currentInputConnection ?: return
-        runCatching {
-            val batching = ic.beginBatchEdit()
-            try {
-                val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
-                val length = extracted?.text?.length ?: 0
-
-                if (length > 0 && ic.setSelection(0, length)) {
-                    ic.commitText("", 1)
-                } else {
-                    val before = ic.getTextBeforeCursor(4096, 0)?.length ?: 0
-                    val after = ic.getTextAfterCursor(4096, 0)?.length ?: 0
-                    if (before > 0 || after > 0) {
-                        ic.deleteSurroundingText(before, after)
-                    }
-                }
-
-                // runCatching bloğunun son ifadesini açıkça Unit yap.
-                // Böylece yukarıdaki if/else Kotlin tarafından değer döndüren
-                // bir expression gibi yorumlanmaz.
-                Unit
-            } finally {
-                if (batching) ic.endBatchEdit()
+                gravity =
+                    Gravity.CENTER_VERTICAL
             }
+
+        shiftButton =
+            keyButton(
+                "⇧ ABC",
+                C_PANEL_ALT,
+                14f
+            ) {
+                caps = !caps
+                updateLetterCase()
+            }.also {
+                row.addView(
+                    it,
+                    weightedParams(
+                        0.85f,
+                        48
+                    )
+                )
+            }
+
+        row.addView(
+            keyButton(
+                "BOŞLUK",
+                C_PANEL_ALT,
+                14f
+            ) {
+                commit(" ")
+            },
+            weightedParams(
+                2.5f,
+                48
+            )
+        )
+
+        val back =
+            keyButton(
+                "⌫",
+                C_PANEL_ALT,
+                20f
+            ) {
+                currentInputConnection
+                    ?.deleteSurroundingText(
+                        1,
+                        0
+                    )
+            }.apply {
+                setOnLongClickListener {
+                    currentInputConnection
+                        ?.deleteSurroundingText(
+                            10,
+                            0
+                        )
+
+                    true
+                }
+            }
+
+        row.addView(
+            back,
+            weightedParams(
+                0.8f,
+                48
+            )
+        )
+
+        row.addView(
+            keyButton(
+                "ENTER",
+                C_BLUE_DARK,
+                13f
+            ) {
+                sendEnter()
+            },
+            weightedParams(
+                0.95f,
+                48
+            )
+        )
+
+        root.addView(row)
+    }
+
+    private fun refreshLastSectionUi() {
+        val last =
+            ImeSelectionStore
+                .getLastSection(this)
+
+        if (
+            last.isNullOrBlank()
+        ) {
+            lastSectionLabel?.text =
+                "Henüz seçim yok"
+
+            lastSectionLabel
+                ?.setTextColor(
+                    C_MUTED
+                )
+
+            lastSectionButton?.text =
+                "HAT YOK"
+
+            lastSectionButton?.isEnabled =
+                false
+
+            lastSectionButton?.alpha =
+                0.45f
+        } else {
+            lastSectionLabel?.text =
+                last
+
+            lastSectionLabel
+                ?.setTextColor(
+                    C_GREEN_LIGHT
+                )
+
+            lastSectionButton?.text =
+                "$last  YAZ"
+
+            lastSectionButton?.isEnabled =
+                true
+
+            lastSectionButton?.alpha =
+                1f
         }
     }
 
-    private fun loadPending() {
-        val stored = ImeSelectionStore.peek(this)
-        pendingText = stored
-        refreshPendingUi()
-    }
+    private fun openMapPicker() {
+        ImeSelectionStore
+            .beginSelectionRequest(
+                this
+            )
 
-    private fun refreshPendingUi() {
-        val text = pendingText ?: ImeSelectionStore.peek(this)
-        pendingLabel?.text = when {
-            !text.isNullOrBlank() -> "Bekleyen: $text"
-            ImeSelectionStore.isSelectionRequestActive(this) -> "Haritadan seçim bekleniyor"
-            else -> "Hazır"
-        }
-        writeButton?.isEnabled = !text.isNullOrBlank()
-    }
+        val intent =
+            Intent(
+                this,
+                MainActivity::class.java
+            ).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
 
-    private fun schedulePendingCommit() {
-        val text = pendingText ?: ImeSelectionStore.peek(this) ?: return
-        if (text.isBlank()) return
+                putExtra(
+                    MainActivity.EXTRA_FROM_IME,
+                    true
+                )
+            }
 
-        retryToken++
-        val token = retryToken
-        listOf(100L, 300L, 650L, 1100L).forEach { delay ->
-            handler.postDelayed({ tryCommit(token) }, delay)
-        }
-    }
-
-    private fun tryCommit(token: Int) {
-        if (token != retryToken) return
-        tryWritePendingAsHardwareKeys(showFailure = false)
+        startActivity(intent)
     }
 
     /**
-     * Haritadan gelen kesit numarasini Robot uygulamasina fiziksel klavye
-     * tuslari basilmis gibi yollar.
-     *
-     * Robot Kontrol Sistemi'nin ozel editoru commitText() kabul etmiyor olabilir;
-     * KeyEvent yolu normal donanim klavyesi davranisina daha yakindir.
+     * Robot'ta elle FOTON Klavye ile yazının çalıştığı doğrulandı.
+     * Bu nedenle son seçilen kesit de aynı commitText yoluyla,
+     * karakter karakter ve küçük gecikmeyle yazılır.
      */
-    private fun tryWritePendingAsHardwareKeys(showFailure: Boolean): Boolean {
-        val text = pendingText ?: ImeSelectionStore.peek(this) ?: return false
-        if (text.isBlank()) return false
+    private fun typeSectionLikeNormalKeys(
+        section: String
+    ) {
+        val ic =
+            currentInputConnection
 
-        val ic = currentInputConnection
         if (ic == null) {
-            if (showFailure) {
-                Toast.makeText(this, "Aktif yazı alanı bulunamadı.", Toast.LENGTH_SHORT).show()
-            }
-            return false
-        }
-
-        // Boru Kesit No formatlari ASCII: A41-A40, A38-A38-1 vb.
-        val events = buildHardwareEvents(text)
-        if (events.isEmpty()) {
-            if (showFailure) {
-                Toast.makeText(this, "Kesit numarası tuş olayına çevrilemedi.", Toast.LENGTH_SHORT).show()
-            }
-            return false
-        }
-
-        // Önce alanın sonuna git ve eski değeri silmeye çalış.
-        runCatching {
-            sendKey(ic, KeyEvent.KEYCODE_MOVE_END)
-            repeat(64) {
-                ic.sendKeyEvent(
-                    KeyEvent(
-                        KeyEvent.ACTION_DOWN,
-                        KeyEvent.KEYCODE_DEL
-                    )
-                )
-                ic.sendKeyEvent(
-                    KeyEvent(
-                        KeyEvent.ACTION_UP,
-                        KeyEvent.KEYCODE_DEL
-                    )
-                )
-            }
-        }
-
-        var acceptedAny = false
-        var allAccepted = true
-
-        events.forEach { ev ->
-            val accepted = runCatching { ic.sendKeyEvent(ev) }.getOrDefault(false)
-            acceptedAny = acceptedAny || accepted
-            allAccepted = allAccepted && accepted
-        }
-
-        if (acceptedAny || allAccepted) {
-            // Aynı seçimin tekrar tekrar yazılmasını engelle.
-            pendingText = null
-            ImeSelectionStore.clear(this)
-            retryToken++
-            refreshPendingUi()
-            Toast.makeText(this, "$text tuş olarak gönderildi", Toast.LENGTH_SHORT).show()
-            return true
-        }
-
-        // Son emniyet: bazı custom editorlar paste'i kabul eder.
-        val pasted = tryPasteFallback(text)
-        if (pasted) {
-            pendingText = null
-            ImeSelectionStore.clear(this)
-            retryToken++
-            refreshPendingUi()
-            Toast.makeText(this, "$text yapıştırıldı", Toast.LENGTH_SHORT).show()
-            return true
-        }
-
-        if (showFailure) {
             Toast.makeText(
                 this,
-                "Robot alanı tuş ve yapıştırma girişini kabul etmedi. Seçim kaybolmadı.",
-                Toast.LENGTH_LONG
+                "Aktif yazı alanı bulunamadı.",
+                Toast.LENGTH_SHORT
             ).show()
-        }
-        return false
-    }
 
-    private fun buildHardwareEvents(text: String): List<KeyEvent> {
-        val result = mutableListOf<KeyEvent>()
-        val now = SystemClock.uptimeMillis()
-
-        text.forEach { raw ->
-            val ch = raw.uppercaseChar()
-            val spec = keySpec(ch) ?: return emptyList()
-
-            val meta = if (ch in 'A'..'Z') KeyEvent.META_SHIFT_ON else 0
-
-            result += KeyEvent(
-                now,
-                now,
-                KeyEvent.ACTION_DOWN,
-                spec,
-                0,
-                meta,
-                KeyEvent.KEYCODE_UNKNOWN,
-                0,
-                KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE
-            )
-            result += KeyEvent(
-                now,
-                now,
-                KeyEvent.ACTION_UP,
-                spec,
-                0,
-                meta,
-                KeyEvent.KEYCODE_UNKNOWN,
-                0,
-                KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE
-            )
+            return
         }
 
-        return result
+        clearCurrentConnectionText(ic)
+
+        section
+            .toCharArray()
+            .forEachIndexed {
+                index,
+                char ->
+
+                handler.postDelayed(
+                    {
+                        ic.commitText(
+                            char.toString(),
+                            1
+                        )
+                    },
+                    index * 45L
+                )
+            }
+
+        Toast.makeText(
+            this,
+            "$section yazılıyor",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
-    private fun keySpec(ch: Char): Int? = when (ch) {
-        'A' -> KeyEvent.KEYCODE_A
-        'B' -> KeyEvent.KEYCODE_B
-        'C' -> KeyEvent.KEYCODE_C
-        'D' -> KeyEvent.KEYCODE_D
-        'E' -> KeyEvent.KEYCODE_E
-        'F' -> KeyEvent.KEYCODE_F
-        'G' -> KeyEvent.KEYCODE_G
-        'H' -> KeyEvent.KEYCODE_H
-        'I' -> KeyEvent.KEYCODE_I
-        'J' -> KeyEvent.KEYCODE_J
-        'K' -> KeyEvent.KEYCODE_K
-        'L' -> KeyEvent.KEYCODE_L
-        'M' -> KeyEvent.KEYCODE_M
-        'N' -> KeyEvent.KEYCODE_N
-        'O' -> KeyEvent.KEYCODE_O
-        'P' -> KeyEvent.KEYCODE_P
-        'Q' -> KeyEvent.KEYCODE_Q
-        'R' -> KeyEvent.KEYCODE_R
-        'S' -> KeyEvent.KEYCODE_S
-        'T' -> KeyEvent.KEYCODE_T
-        'U' -> KeyEvent.KEYCODE_U
-        'V' -> KeyEvent.KEYCODE_V
-        'W' -> KeyEvent.KEYCODE_W
-        'X' -> KeyEvent.KEYCODE_X
-        'Y' -> KeyEvent.KEYCODE_Y
-        'Z' -> KeyEvent.KEYCODE_Z
-        '0' -> KeyEvent.KEYCODE_0
-        '1' -> KeyEvent.KEYCODE_1
-        '2' -> KeyEvent.KEYCODE_2
-        '3' -> KeyEvent.KEYCODE_3
-        '4' -> KeyEvent.KEYCODE_4
-        '5' -> KeyEvent.KEYCODE_5
-        '6' -> KeyEvent.KEYCODE_6
-        '7' -> KeyEvent.KEYCODE_7
-        '8' -> KeyEvent.KEYCODE_8
-        '9' -> KeyEvent.KEYCODE_9
-        '-' -> KeyEvent.KEYCODE_MINUS
-        '/' -> KeyEvent.KEYCODE_SLASH
-        '.' -> KeyEvent.KEYCODE_PERIOD
-        ',' -> KeyEvent.KEYCODE_COMMA
-        else -> null
+    private fun clearCurrentConnectionText(
+        ic: android.view.inputmethod.InputConnection
+    ) {
+        runCatching {
+            val extracted =
+                ic.getExtractedText(
+                    ExtractedTextRequest(),
+                    0
+                )
+
+            val length =
+                extracted?.text?.length
+                    ?: 0
+
+            if (
+                length > 0 &&
+                ic.setSelection(
+                    0,
+                    length
+                )
+            ) {
+                ic.commitText(
+                    "",
+                    1
+                )
+            } else {
+                val before =
+                    ic.getTextBeforeCursor(
+                        4096,
+                        0
+                    )?.length ?: 0
+
+                val after =
+                    ic.getTextAfterCursor(
+                        4096,
+                        0
+                    )?.length ?: 0
+
+                if (
+                    before > 0 ||
+                    after > 0
+                ) {
+                    ic.deleteSurroundingText(
+                        before,
+                        after
+                    )
+                }
+            }
+        }
     }
 
-    private fun sendKey(ic: android.view.inputmethod.InputConnection, keyCode: Int): Boolean {
-        val down = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
-        val up = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
-        return down || up
+    private fun updateLetterCase() {
+        letterButtons.forEach {
+            (button, raw) ->
+
+            button.text =
+                if (caps) {
+                    raw.uppercase(tr)
+                } else {
+                    raw.lowercase(tr)
+                }
+        }
+
+        shiftButton?.text =
+            if (caps) {
+                "⇧ ABC"
+            } else {
+                "⇧ abc"
+            }
     }
 
-    private fun tryPasteFallback(text: String): Boolean {
-        return runCatching {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("FOTONMAP", text))
-            currentInputConnection?.performContextMenuAction(android.R.id.paste) == true
-        }.getOrDefault(false)
+    private fun commit(
+        value: String
+    ) {
+        currentInputConnection
+            ?.commitText(
+                value,
+                1
+            )
     }
 
-    private fun actionButton(text: String, click: () -> Unit): Button =
-        keyButton(text, dp(50), 14f, click).apply {
-            setBackgroundColor(Color.rgb(29, 90, 166))
+    private fun sendEnter() {
+        val ic =
+            currentInputConnection
+                ?: return
+
+        val sent =
+            runCatching {
+                val down =
+                    ic.sendKeyEvent(
+                        KeyEvent(
+                            KeyEvent.ACTION_DOWN,
+                            KeyEvent.KEYCODE_ENTER
+                        )
+                    )
+
+                val up =
+                    ic.sendKeyEvent(
+                        KeyEvent(
+                            KeyEvent.ACTION_UP,
+                            KeyEvent.KEYCODE_ENTER
+                        )
+                    )
+
+                down || up
+            }.getOrDefault(false)
+
+        if (!sent) {
+            ic.commitText(
+                "\n",
+                1
+            )
+        }
+    }
+
+    private fun clearEditorText() {
+        val ic =
+            currentInputConnection
+                ?: return
+
+        clearCurrentConnectionText(
+            ic
+        )
+    }
+
+    private fun actionButton(
+        label: String,
+        color: Int,
+        click: () -> Unit
+    ): Button =
+        Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = 13f
+
+            setTypeface(
+                typeface,
+                Typeface.BOLD
+            )
+
+            setTextColor(
+                Color.WHITE
+            )
+
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+
+            setPadding(
+                dp(5),
+                0,
+                dp(5),
+                0
+            )
+
+            background =
+                roundedBg(
+                    color,
+                    dpF(9f)
+                )
+
+            setOnClickListener {
+                performHapticFeedback(
+                    HapticFeedbackConstants.KEYBOARD_TAP
+                )
+
+                click()
+            }
         }
 
     private fun keyButton(
-        text: String,
-        height: Int,
+        label: String,
+        color: Int,
         sizeSp: Float,
         click: () -> Unit
-    ) = Button(this).apply {
-        this.text = text
-        isAllCaps = false
-        textSize = sizeSp
-        setTextColor(Color.WHITE)
-        setBackgroundColor(Color.rgb(33, 58, 86))
-        minHeight = 0
-        minimumHeight = 0
-        minWidth = 0
-        minimumWidth = 0
-        setPadding(dp(2), 0, dp(2), 0)
-        setOnClickListener {
-            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            click()
+    ): Button =
+        Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = sizeSp
+
+            setTextColor(
+                C_TEXT
+            )
+
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+
+            setPadding(
+                dp(1),
+                0,
+                dp(1),
+                0
+            )
+
+            background =
+                roundedBg(
+                    color,
+                    dpF(8f)
+                )
+
+            setOnClickListener {
+                performHapticFeedback(
+                    HapticFeedbackConstants.KEYBOARD_TAP
+                )
+
+                click()
+            }
         }
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            height
+
+    private fun weightedParams(
+        weight: Float,
+        height: Int
+    ): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(
+            0,
+            dp(height),
+            weight
         ).apply {
-            setMargins(dp(2), dp(2), dp(2), dp(2))
+            setMargins(
+                dp(2),
+                dp(2),
+                dp(2),
+                dp(2)
+            )
         }
-    }
 
-    private fun weightParams(weight: Float, height: Int) =
-        LinearLayout.LayoutParams(0, dp(height), weight).apply {
-            setMargins(dp(2), dp(2), dp(2), dp(2))
+    private fun roundedBg(
+        color: Int,
+        radius: Float
+    ): GradientDrawable =
+        GradientDrawable().apply {
+            shape =
+                GradientDrawable.RECTANGLE
+
+            setColor(color)
+
+            cornerRadius =
+                radius
         }
 
-    private fun dp(v: Int): Int =
-        (v * resources.displayMetrics.density).toInt()
+    private fun dp(
+        value: Int
+    ): Int =
+        (
+            value *
+            resources
+                .displayMetrics
+                .density
+        ).toInt()
+
+    private fun dpF(
+        value: Float
+    ): Float =
+        value *
+        resources
+            .displayMetrics
+            .density
 
     companion object {
-        private var ref: WeakReference<FotonInputMethodService>? = null
-        val instance: FotonInputMethodService? get() = ref?.get()
+        private val C_BG =
+            Color.rgb(
+                10,
+                18,
+                28
+            )
+
+        private val C_PANEL =
+            Color.rgb(
+                22,
+                36,
+                52
+            )
+
+        private val C_PANEL_ALT =
+            Color.rgb(
+                40,
+                57,
+                76
+            )
+
+        private val C_KEY =
+            Color.rgb(
+                31,
+                46,
+                63
+            )
+
+        private val C_BLUE =
+            Color.rgb(
+                37,
+                99,
+                235
+            )
+
+        private val C_BLUE_DARK =
+            Color.rgb(
+                30,
+                75,
+                155
+            )
+
+        private val C_GREEN =
+            Color.rgb(
+                21,
+                139,
+                89
+            )
+
+        private val C_GREEN_LIGHT =
+            Color.rgb(
+                105,
+                231,
+                166
+            )
+
+        private val C_TEXT =
+            Color.rgb(
+                241,
+                246,
+                251
+            )
+
+        private val C_MUTED =
+            Color.rgb(
+                150,
+                170,
+                191
+            )
     }
 }

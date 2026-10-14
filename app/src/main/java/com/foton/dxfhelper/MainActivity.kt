@@ -257,26 +257,24 @@ class MainActivity : AppCompatActivity() {
             endManhole = info.endName,
             lengthMeters = info.lengthMeters
         )
-        val returnToIme = launchedFromIme || ImeSelectionStore.isSelectionRequestActive(this)
 
-        if (returnToIme) {
-            // Seçimi kalıcı olarak sakla. Intent extra kaybolsa bile
-            // selection_request_active sayesinde bu blok kesin calisir.
-            // Harita açıldığında Robot'un InputConnection'i
-            // geçici olarak düşebilir; bu nedenle değeri asla zaman aşımıyla silmiyoruz.
-            ImeSelectionStore.save(this, payload.sectionNo)
-            status.text = "${info.sectionNo} seçildi. Robot alanına dönülüyor..."
+        // Robot'a otomatik geri yazma yok.
+        // Seçilen hattı kalıcı "Son Seçilen Hat" olarak tutuyoruz.
+        ImeSelectionStore.saveLastSection(this, payload.sectionNo)
+        ImeSelectionStore.cancelSelectionRequest(this)
+
+        status.text =
+            "${payload.sectionNo} kaydedildi. Robot'ta Boru Kesit No alanına dokun; FOTON Klavye üstündeki '${payload.sectionNo} YAZ' düğmesine bas."
+
+        Toast.makeText(
+            this,
+            "Son seçilen hat: ${payload.sectionNo}",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        if (launchedFromIme) {
             finish()
             overridePendingTransition(0, 0)
-
-            // Activity kapandıktan sonra IME'ye haber ver. Robot alanı hâlâ odaktaysa
-            // otomatik yazar; değilse seçim klavyede bekler.
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                FotonInputMethodService.instance?.notifySelectionReady(payload.sectionNo)
-            }, 250)
-        } else {
-            copyFallback(payload)
-            status.text = "${info.sectionNo} yeşil işaretlendi. Kesit no panoya kopyalandı."
         }
     }
 

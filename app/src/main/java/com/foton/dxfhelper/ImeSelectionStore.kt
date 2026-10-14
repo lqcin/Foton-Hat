@@ -12,6 +12,7 @@ object ImeSelectionStore {
     private const val PREF = "foton_ime_bridge"
     private const val KEY_PENDING = "pending_section"
     private const val KEY_REQUEST_ACTIVE = "selection_request_active"
+    private const val KEY_LAST_SECTION = "last_selected_section"
 
     fun save(context: Context, sectionNo: String) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -53,6 +54,26 @@ object ImeSelectionStore {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_REQUEST_ACTIVE, false)
+            .commit()
+    }
+
+
+    fun saveLastSection(context: Context, sectionNo: String) {
+        if (sectionNo.isBlank()) return
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LAST_SECTION, sectionNo)
+            .commit()
+    }
+
+    fun getLastSection(context: Context): String? =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_SECTION, null)
+
+    fun clearLastSection(context: Context) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_LAST_SECTION)
             .commit()
     }
 }
