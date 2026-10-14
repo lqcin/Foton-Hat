@@ -198,6 +198,33 @@ class FotonInputMethodService : InputMethodService() {
             )
         )
 
+        header.addView(
+            Button(this).apply {
+                text = "⌄ GİZLE"
+                isAllCaps = false
+                textSize = 11f
+                setTextColor(C_TEXT)
+                minHeight = 0
+                minimumHeight = 0
+                minWidth = 0
+                minimumWidth = 0
+                setPadding(dp(8), 0, dp(8), 0)
+                background = roundedBg(C_PANEL_ALT, dpF(8f))
+                setOnClickListener {
+                    performHapticFeedback(
+                        HapticFeedbackConstants.KEYBOARD_TAP
+                    )
+                    requestHideSelf(0)
+                }
+            },
+            LinearLayout.LayoutParams(
+                dp(82),
+                dp(30)
+            ).apply {
+                setMargins(dp(6), 0, 0, 0)
+            }
+        )
+
         root.addView(header)
     }
 

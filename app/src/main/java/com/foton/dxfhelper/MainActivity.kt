@@ -44,7 +44,11 @@ class MainActivity : AppCompatActivity() {
     private val openMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
             }
             getSharedPreferences("fotonmap_main", MODE_PRIVATE).edit()
                 .putString("active_uri", uri.toString())
@@ -94,7 +98,7 @@ class MainActivity : AppCompatActivity() {
 
         launchedFromIme = requestedByIntent || requestedByStore
         if (launchedFromIme) {
-            status.text = "FOTON Klavye için hat seçimi. Hattı seç ve ONAYLA; Boru Kesit No Robot alanına yazılacak."
+            status.text = "FOTON Klavye için hat seçimi. Hattı seç ve ONAYLA; seçim klavyenin üstündeki Son Seçilen Hat kartına kaydolacak."
         }
     }
 
@@ -189,19 +193,41 @@ class MainActivity : AppCompatActivity() {
 
         executor.execute {
             val result = runCatching {
-                contentResolver.openInputStream(uri).use { input ->
-                    requireNotNull(input) { "FOTONMAP açılamadı" }
-                    FotonMapParser.parse(input)
-                }
+                val raw = FotonMapFileStore.readBestEffort(this, uri)
+                FotonMapParser.parse(
+                    raw.byteInputStream(Charsets.UTF_8)
+                )
             }
             runOnUiThread {
                 result.onSuccess { drawing ->
                     activeDrawing = drawing
-                    completed = completionStore.load(uri)
+
+                    // Yeni dosyalarda gerçek kaynak .fotonmap içindeki completed alanıdır.
+                    // Eski dosyada completed yoksa eski tablet kaydını bir kez devralırız.
+                    completed =
+                        (
+                            drawing.embeddedCompletedIds
+                                ?: completionStore.load(uri)
+                        ).toMutableSet()
+
                     // Haritada artık bulunmayan eski id'leri temizle.
                     val valid = drawing.segments.mapTo(hashSetOf()) { it.id }
                     completed.retainAll(valid)
+
+                    // Local store yalnızca emniyet / eski sürüm fallback'i olarak kalır.
                     completionStore.save(uri, completed)
+
+                    // Eski formatta completed alanı yoksa mevcut yerel durumu dosyaya taşı.
+                    if (drawing.embeddedCompletedIds == null && completed.isNotEmpty()) {
+                        runCatching {
+                            FotonMapFileStore.writeCompleted(
+                                this,
+                                uri,
+                                completed
+                            )
+                        }
+                    }
+
                     mapView.drawing = drawing
                     mapView.completedIds = completed
                     updateCount()
@@ -247,9 +273,27 @@ class MainActivity : AppCompatActivity() {
     private fun saveAndTransfer(uri: Uri, info: SelectedLineInfo) {
         completed.add(info.segment.id)
         completionStore.save(uri, completed)
+
+        val fileSave =
+            runCatching {
+                FotonMapFileStore.writeCompleted(
+                    this,
+                    uri,
+                    completed
+                )
+            }
+
         mapView.completedIds = completed
         updateCount()
         undoButton.isEnabled = true
+
+        fileSave.onFailure { err ->
+            Toast.makeText(
+                this,
+                "Hat yeşil işaretlendi fakat FOTONMAP dosyasına yazılamadı: ${err.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
 
         val payload = RobotSelection(
             sectionNo = info.sectionNo,
@@ -283,9 +327,27 @@ class MainActivity : AppCompatActivity() {
         val id = currentInfo?.segment?.id ?: return
         if (done) completed.add(id) else completed.remove(id)
         completionStore.save(uri, completed)
+
+        val fileSave =
+            runCatching {
+                FotonMapFileStore.writeCompleted(
+                    this,
+                    uri,
+                    completed
+                )
+            }
+
         mapView.completedIds = completed
         updateCount()
         refreshSelection()
+
+        fileSave.onFailure { err ->
+            Toast.makeText(
+                this,
+                "FOTONMAP dosyasına güncel durum yazılamadı: ${err.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun updateCount() {

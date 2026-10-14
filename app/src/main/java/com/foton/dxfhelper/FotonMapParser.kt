@@ -76,6 +76,23 @@ object FotonMapParser {
             )
         }
 
+        val completedIds: Set<String>? =
+            if (root.has("completed")) {
+                val arr = root.optJSONArray("completed")
+                if (arr == null) {
+                    emptySet()
+                } else {
+                    buildSet {
+                        for (i in 0 until arr.length()) {
+                            val id = arr.optString(i, "").trim()
+                            if (id.isNotBlank()) add(id)
+                        }
+                    }
+                }
+            } else {
+                null
+            }
+
         return DxfDrawing(
             segments = segments,
             circles = circles,
@@ -85,7 +102,8 @@ object FotonMapParser {
             maxX = maxX,
             maxY = maxY,
             sourceName = root.optString("source", ""),
-            formatVersion = version
+            formatVersion = version,
+            embeddedCompletedIds = completedIds
         )
     }
 }

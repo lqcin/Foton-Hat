@@ -44,7 +44,10 @@ data class DxfDrawing(
     val maxX: Double,
     val maxY: Double,
     val sourceName: String = "",
-    val formatVersion: Int = 1
+    val formatVersion: Int = 1,
+    // null = eski .fotonmap, henüz completed alanı yok.
+    // emptySet = completed alanı var ama henüz tamamlanan hat yok.
+    val embeddedCompletedIds: Set<String>? = null
 ) {
     val width: Double get() = (maxX - minX).coerceAtLeast(1.0)
     val height: Double get() = (maxY - minY).coerceAtLeast(1.0)
