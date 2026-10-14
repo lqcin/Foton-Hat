@@ -1,4 +1,4 @@
-name: FOTON DXF APK Olustur
+name: FOTONMAP APK Olustur
 
 on:
   push:
@@ -40,10 +40,10 @@ jobs:
       - name: APK adini duzenle
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/FOTON-DXF-Hat-Secici-v0.1.0-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/FOTONMAP-Hat-Secici-v0.2.0-debug.apk
 
       - name: APK artifact yukle
         uses: actions/upload-artifact@v4
         with:
-          name: FOTON-DXF-Hat-Secici-v0.1.0
-          path: dist/FOTON-DXF-Hat-Secici-v0.1.0-debug.apk
+          name: FOTONMAP-Hat-Secici-v0.2.0
+          path: dist/FOTONMAP-Hat-Secici-v0.2.0-debug.apk
