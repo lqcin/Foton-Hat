@@ -11,8 +11,8 @@ android {
         applicationId = "com.foton.dxfhelper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 14
-        versionName = "0.6.0"
+        versionCode = 17
+        versionName = "0.9.0"
     }
 
     buildTypes {
