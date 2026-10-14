@@ -243,11 +243,18 @@ class MainActivity : AppCompatActivity() {
             lengthMeters = info.lengthMeters
         )
         if (launchedFromIme) {
+            // Seçimi kalıcı olarak sakla. Harita açıldığında Robot'un InputConnection'i
+            // geçici olarak düşebilir; bu nedenle değeri asla zaman aşımıyla silmiyoruz.
             ImeSelectionStore.save(this, payload.sectionNo)
-            FotonInputMethodService.instance?.queueSection(payload.sectionNo)
             status.text = "${info.sectionNo} seçildi. Robot alanına dönülüyor..."
-            // Robot Kontrol Sistemi yeniden öne gelir; klavye bekleyen değeri aktif alana yazar.
             finish()
+            overridePendingTransition(0, 0)
+
+            // Activity kapandıktan sonra IME'ye haber ver. Robot alanı hâlâ odaktaysa
+            // otomatik yazar; değilse seçim klavyede bekler.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                FotonInputMethodService.instance?.notifySelectionReady(payload.sectionNo)
+            }, 250)
         } else {
             copyFallback(payload)
             status.text = "${info.sectionNo} yeşil işaretlendi. Kesit no panoya kopyalandı."

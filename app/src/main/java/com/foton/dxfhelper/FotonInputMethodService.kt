@@ -10,8 +10,8 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
-import android.view.inputmethod.InputMethodManager
 import android.view.inputmethod.ExtractedTextRequest
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,20 +19,28 @@ import android.widget.Toast
 import java.lang.ref.WeakReference
 
 /**
- * FOTON klavyesi: Robot Kontrol Sistemi'ndeki aktif metin alanina
- * FOTONMAP'ten secilen Boru Kesit No'yu yazar.
+ * FOTON klavyesi.
+ *
+ * Kritik kural:
+ * Harita Activity'si acilinca Robot Kontrol Sistemi'ndeki aktif editorun
+ * InputConnection'i gecici olarak kaybolabilir. Bu nedenle secilen hat
+ * SharedPreferences'ta "pending" olarak tutulur ve ASLA zaman asimiyla silinmez.
  *
  * Akis:
- * 1) Kullanici Robot'ta Boru Kesit No alanina dokunur.
- * 2) FOTON klavyesinde HARITADAN HAT SEC'e basar.
- * 3) MainActivity acilir, hat secilir ve ONAYLA denir.
- * 4) Secim bekleyen deger olarak kaydedilir, harita kapanir.
- * 5) Robot tekrar one gelince InputConnection uzerinden deger yazilir.
+ * 1) Robot'ta Boru Kesit No alanina dokun.
+ * 2) FOTON Klavye -> HARITADAN HAT SEC.
+ * 3) Hatti sec -> ONAYLA.
+ * 4) Robot'a donulunce alan odagi korunmussa otomatik yazilir.
+ * 5) Odak korunmadiysa Boru Kesit No alanina tekrar dokun.
+ *    FOTON Klavye bekleyen secimi otomatik yazar.
+ * 6) Gerekirse "SECIMI YAZ" dugmesine bas.
  */
 class FotonInputMethodService : InputMethodService() {
     private val handler = Handler(Looper.getMainLooper())
     private var pendingText: String? = null
     private var retryToken = 0
+    private var pendingLabel: TextView? = null
+    private var writeButton: Button? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -52,13 +60,26 @@ class FotonInputMethodService : InputMethodService() {
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
 
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         val title = TextView(this).apply {
             text = "FOTON KLAVYE"
             setTextColor(Color.WHITE)
             textSize = 14f
             gravity = Gravity.CENTER_VERTICAL
         }
-        root.addView(title)
+        top.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        pendingLabel = TextView(this).apply {
+            setTextColor(Color.rgb(102, 230, 160))
+            textSize = 14f
+            gravity = Gravity.END
+        }
+        top.addView(pendingLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(top)
 
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -67,11 +88,24 @@ class FotonInputMethodService : InputMethodService() {
 
         row.addView(keyButton("HARİTADAN HAT SEÇ") {
             openMapPicker()
-        }, LinearLayout.LayoutParams(0, dp(54), 1f))
+        }, LinearLayout.LayoutParams(0, dp(54), 1.45f))
+
+        writeButton = keyButton("SEÇİMİ YAZ") {
+            loadPending()
+            if (!tryCommitNow(showFailure = true)) {
+                Toast.makeText(
+                    this,
+                    "Boru Kesit No alanına tekrar dokunup 'SEÇİMİ YAZ' de.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }.also {
+            row.addView(it, LinearLayout.LayoutParams(0, dp(54), 1.0f))
+        }
 
         row.addView(keyButton("⌫") {
             currentInputConnection?.deleteSurroundingText(1, 0)
-        }, LinearLayout.LayoutParams(dp(72), dp(54)))
+        }, LinearLayout.LayoutParams(dp(66), dp(54)))
 
         row.addView(keyButton("NORMAL KLAVYE") {
             val switched = runCatching { switchToNextInputMethod(false) }.getOrDefault(false)
@@ -79,72 +113,149 @@ class FotonInputMethodService : InputMethodService() {
                 (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
                     .showInputMethodPicker()
             }
-        }, LinearLayout.LayoutParams(dp(145), dp(54)))
+        }, LinearLayout.LayoutParams(dp(135), dp(54)))
 
         root.addView(row)
 
         val hint = TextView(this).apply {
-            text = "Boru Kesit No alanındayken 'Haritadan Hat Seç' düğmesine bas."
+            text = "Hat seçildikten sonra otomatik yazılmazsa Boru Kesit No alanına tekrar dokun. Seçim kaybolmaz."
             setTextColor(Color.rgb(177, 198, 220))
             textSize = 12f
             setPadding(0, dp(4), 0, 0)
         }
         root.addView(hint)
+
+        loadPending()
+        refreshPendingUi()
+        scheduleCommit()
         return root
     }
 
-    override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+    override fun onStartInput(
+        attribute: android.view.inputmethod.EditorInfo?,
+        restarting: Boolean
+    ) {
+        super.onStartInput(attribute, restarting)
+        loadPending()
+        scheduleCommit()
+    }
+
+    override fun onStartInputView(
+        info: android.view.inputmethod.EditorInfo?,
+        restarting: Boolean
+    ) {
         super.onStartInputView(info, restarting)
-        if (pendingText == null) pendingText = ImeSelectionStore.peek(this)
+        loadPending()
+        refreshPendingUi()
         scheduleCommit()
     }
 
     override fun onWindowShown() {
         super.onWindowShown()
-        if (pendingText == null) pendingText = ImeSelectionStore.peek(this)
+        loadPending()
+        refreshPendingUi()
         scheduleCommit()
     }
 
-    fun queueSection(sectionNo: String) {
+    /**
+     * Harita secimi tamamlandiginda cagrilir.
+     * Deger kalici store'a yazilir. Robot editoru hemen geri gelmezse
+     * pending olarak beklemeye devam eder.
+     */
+    fun notifySelectionReady(sectionNo: String) {
         if (sectionNo.isBlank()) return
         pendingText = sectionNo
         ImeSelectionStore.save(this, sectionNo)
+        refreshPendingUi()
+
+        // Robot activity'sinin yeniden one gelmesi icin zaman tani.
         retryToken++
         val token = retryToken
-        // Harita activity'si kapanip Robot tekrar one geldikten sonra dene.
-        handler.postDelayed({ tryCommit(token) }, 180)
-        handler.postDelayed({ tryCommit(token) }, 450)
-        handler.postDelayed({ tryCommit(token) }, 900)
-        handler.postDelayed({ tryCommit(token) }, 1500)
-        handler.postDelayed({ fallbackIfStillPending(token) }, 2300)
+        listOf(300L, 650L, 1100L, 1800L, 2800L, 4200L).forEach { delay ->
+            handler.postDelayed({ tryCommit(token) }, delay)
+        }
+
+        // Klavye penceresi kapanmissa tekrar gostermeyi dene.
+        handler.postDelayed({
+            runCatching { requestShowSelf(0) }
+        }, 500L)
+
+        // Secimi SILME. Basarisizsa kullanici alana tekrar dokununca yazilacak.
+        handler.postDelayed({
+            if (token == retryToken && pendingText != null) {
+                refreshPendingUi()
+            }
+        }, 5000L)
+    }
+
+    private fun loadPending() {
+        val stored = ImeSelectionStore.peek(this)
+        if (!stored.isNullOrBlank()) pendingText = stored
+        refreshPendingUi()
+    }
+
+    private fun refreshPendingUi() {
+        val text = pendingText ?: ImeSelectionStore.peek(this)
+        pendingLabel?.text = if (text.isNullOrBlank()) "Seçim yok" else "Bekleyen: $text"
+        writeButton?.isEnabled = !text.isNullOrBlank()
     }
 
     private fun scheduleCommit() {
-        val text = pendingText ?: return
+        val text = pendingText ?: ImeSelectionStore.peek(this) ?: return
         if (text.isBlank()) return
+
         retryToken++
         val token = retryToken
-        handler.postDelayed({ tryCommit(token) }, 100)
-        handler.postDelayed({ tryCommit(token) }, 350)
-        handler.postDelayed({ tryCommit(token) }, 700)
+        listOf(80L, 250L, 550L, 950L, 1600L).forEach { delay ->
+            handler.postDelayed({ tryCommit(token) }, delay)
+        }
     }
 
     private fun tryCommit(token: Int) {
         if (token != retryToken) return
-        val text = pendingText ?: ImeSelectionStore.peek(this) ?: return
-        val ic = currentInputConnection ?: return
+        tryCommitNow(showFailure = false)
+    }
+
+    /**
+     * Aktif editor varsa mevcut metni secip / silip FOTON secimini yazar.
+     * Basarili olursa pending temizlenir. Basarisiz olursa pending KORUNUR.
+     */
+    private fun tryCommitNow(showFailure: Boolean): Boolean {
+        val text = pendingText ?: ImeSelectionStore.peek(this) ?: return false
+        if (text.isBlank()) return false
+
+        val ic = currentInputConnection
+        if (ic == null) {
+            if (showFailure) {
+                Toast.makeText(this, "Aktif yazı alanı bulunamadı.", Toast.LENGTH_SHORT).show()
+            }
+            return false
+        }
 
         val ok = runCatching {
             ic.beginBatchEdit()
-            // Alan doluysa eski Boru Kesit No'nun ustune yaz.
+
+            var replaced = false
+
+            // 1) Editor tum metni raporluyorsa en temiz yol: tumunu sec.
             val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
             val currentLength = extracted?.text?.length ?: 0
             if (currentLength > 0) {
-                val selected = ic.setSelection(0, currentLength)
-                if (!selected) ic.performContextMenuAction(android.R.id.selectAll)
-            } else {
-                ic.performContextMenuAction(android.R.id.selectAll)
+                replaced = ic.setSelection(0, currentLength)
             }
+
+            // 2) setSelection desteklenmiyorsa cursor etrafindaki metni sil.
+            if (!replaced) {
+                val before = ic.getTextBeforeCursor(2048, 0)?.length ?: 0
+                val after = ic.getTextAfterCursor(2048, 0)?.length ?: 0
+                if (before > 0 || after > 0) {
+                    ic.deleteSurroundingText(before, after)
+                } else {
+                    // Custom editorlarda bu bazen calisir.
+                    ic.performContextMenuAction(android.R.id.selectAll)
+                }
+            }
+
             val result = ic.commitText(text, 1)
             ic.endBatchEdit()
             result
@@ -154,24 +265,28 @@ class FotonInputMethodService : InputMethodService() {
             pendingText = null
             ImeSelectionStore.clear(this)
             retryToken++
+            refreshPendingUi()
             Toast.makeText(this, "$text yazıldı", Toast.LENGTH_SHORT).show()
+            return true
         }
-    }
 
-    private fun fallbackIfStillPending(token: Int) {
-        if (token != retryToken) return
-        val text = pendingText ?: return
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("Boru Kesit No", text))
-        pendingText = null
-        ImeSelectionStore.clear(this)
-        retryToken++
-        Toast.makeText(this, "Otomatik yazılamadı; $text panoya kopyalandı", Toast.LENGTH_LONG).show()
+        if (showFailure) {
+            Toast.makeText(
+                this,
+                "Otomatik yazılamadı. Seçim beklemede; alanı tekrar dokunup yeniden dene.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        return false
     }
 
     private fun openMapPicker() {
         val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
             putExtra(MainActivity.EXTRA_FROM_IME, true)
         }
         startActivity(intent)
