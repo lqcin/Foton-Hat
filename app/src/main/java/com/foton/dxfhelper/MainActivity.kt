@@ -18,6 +18,8 @@ import android.view.inputmethod.InputMethodManager
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -30,7 +32,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var mapView: DxfView
+    private lateinit var mapView: GeoMapView
     private lateinit var status: TextView
     private lateinit var fileLabel: TextView
     private lateinit var selectionLabel: TextView
@@ -130,6 +132,10 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
 
+        if (::mapView.isInitialized) {
+            mapView.onResume()
+        }
+
         if (hasLocationPermission()) {
             startLocationUpdates()
         }
@@ -137,6 +143,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         stopLocationUpdates()
+
+        if (::mapView.isInitialized) {
+            mapView.onPause()
+        }
+
         super.onPause()
     }
 
@@ -157,36 +168,166 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUi() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(11, 20, 32))
-            setPadding(dp(10), dp(7), dp(10), dp(7))
-        }
+        val root =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
 
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        top.addView(button("FOTONMAP AÇ") { openMap.launch(arrayOf("*/*")) })
-        top.addView(button("PDF OLUŞTUR") { requestPdf() })
-        top.addView(button("KLAVYEYİ ETKİNLEŞTİR") {
-            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-        })
-        top.addView(button("KLAVYE SEÇ") {
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-        })
-        top.addView(button("−") { mapView.zoomOut() })
-        top.addView(button("+") { mapView.zoomIn() })
-        top.addView(button("SIĞDIR") { mapView.resetView() })
+                setBackgroundColor(
+                    Color.rgb(
+                        11,
+                        20,
+                        32
+                    )
+                )
+
+                setPadding(
+                    dp(6),
+                    dp(4),
+                    dp(6),
+                    dp(4)
+                )
+            }
+
+        val toolScroll =
+            HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled =
+                    false
+                isFillViewport =
+                    true
+            }
+
+        val tools =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        tools.addView(
+            button("FOTONMAP") {
+                openMap.launch(
+                    arrayOf("*/*")
+                )
+            }
+        )
+
+        tools.addView(
+            button("PDF") {
+                requestPdf()
+            }
+        )
+
+        tools.addView(
+            button("KLAVYE") {
+                (
+                    getSystemService(
+                        Context.INPUT_METHOD_SERVICE
+                    ) as InputMethodManager
+                    )
+                    .showInputMethodPicker()
+            }
+        )
+
+        tools.addView(
+            button("−") {
+                mapView.zoomOut()
+            }
+        )
+
+        tools.addView(
+            button("+") {
+                mapView.zoomIn()
+            }
+        )
+
+        tools.addView(
+            button("SIĞDIR") {
+                mapView.resetView()
+            }
+        )
 
         focusButton =
             button("◎ FOKUS") {
                 focusOnCurrentLocation()
             }.apply {
-                isEnabled = false
+                isEnabled =
+                    false
             }
 
-        top.addView(focusButton)
+        tools.addView(
+            focusButton
+        )
+
+        toolScroll.addView(
+            tools
+        )
+
+        root.addView(
+            toolScroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(42)
+            )
+        )
+
+        val infoRow =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+                gravity =
+                    Gravity.CENTER_VERTICAL
+                setPadding(
+                    dp(4),
+                    0,
+                    dp(4),
+                    0
+                )
+            }
+
+        fileLabel =
+            TextView(this).apply {
+                setTextColor(
+                    Color.WHITE
+                )
+                textSize =
+                    12f
+                text =
+                    "FOTONMAP seçilmedi"
+                maxLines =
+                    1
+            }
+
+        infoRow.addView(
+            fileLabel,
+            LinearLayout.LayoutParams(
+                0,
+                dp(30),
+                1f
+            )
+        )
+
+        countLabel =
+            TextView(this).apply {
+                setTextColor(
+                    Color.rgb(
+                        80,
+                        220,
+                        140
+                    )
+                )
+                textSize =
+                    12f
+                gravity =
+                    Gravity.CENTER_VERTICAL
+                text =
+                    "0 / 0"
+            }
+
+        infoRow.addView(
+            countLabel
+        )
 
         locationLabel =
             TextView(this).apply {
@@ -197,40 +338,108 @@ class MainActivity : AppCompatActivity() {
                         200
                     )
                 )
-                textSize = 13f
+                textSize =
+                    12f
                 setPadding(
-                    dp(8),
+                    dp(10),
                     0,
-                    dp(8),
+                    0,
                     0
                 )
-                text = "GPS bekleniyor"
+                gravity =
+                    Gravity.CENTER_VERTICAL
+                text =
+                    "GPS bekleniyor"
             }
 
-        top.addView(locationLabel)
+        infoRow.addView(
+            locationLabel
+        )
 
-        fileLabel = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setPadding(dp(12), 0, dp(8), 0)
-            text = "FOTONMAP seçilmedi"
-        }
-        top.addView(fileLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(
+            infoRow,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(30)
+            )
+        )
 
-        countLabel = TextView(this).apply {
-            setTextColor(Color.rgb(80, 220, 140))
-            textSize = 14f
-            text = "0 / 0 tamamlandı"
-        }
-        top.addView(countLabel)
-        root.addView(top)
+        val mapContainer =
+            FrameLayout(this)
 
-        status = TextView(this).apply {
-            setTextColor(Color.rgb(188, 207, 226))
-            textSize = 13f
-            setPadding(0, dp(5), 0, dp(5))
-        }
-        root.addView(status)
+        mapView =
+            GeoMapView(this).apply {
+                onSegmentSelected =
+                    {
+                        segment,
+                        info ->
+
+                        currentInfo =
+                            info
+
+                        routeTarget =
+                            segment
+
+                        refreshSelection()
+                        refreshRouteGuide()
+
+                        // Uzakta test ediliyorsa rehber çizgisi de görünür olsun.
+                        if (
+                            routeDistanceMeters()
+                                ?.let {
+                                    it > 250.0
+                                } == true
+                        ) {
+                            showRouteOverview()
+                        }
+                    }
+            }
+
+        mapContainer.addView(
+            mapView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        status =
+            TextView(this).apply {
+                setTextColor(
+                    Color.rgb(
+                        225,
+                        235,
+                        245
+                    )
+                )
+                setBackgroundColor(
+                    Color.argb(
+                        175,
+                        15,
+                        26,
+                        40
+                    )
+                )
+                textSize =
+                    12f
+                setPadding(
+                    dp(8),
+                    dp(4),
+                    dp(8),
+                    dp(4)
+                )
+                maxLines =
+                    2
+            }
+
+        mapContainer.addView(
+            status,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            )
+        )
 
         routeBar =
             LinearLayout(this).apply {
@@ -241,13 +450,14 @@ class MainActivity : AppCompatActivity() {
                 visibility =
                     View.GONE
                 setPadding(
-                    dp(10),
+                    dp(8),
                     dp(4),
-                    dp(6),
+                    dp(5),
                     dp(4)
                 )
                 setBackgroundColor(
-                    Color.rgb(
+                    Color.argb(
+                        225,
                         42,
                         31,
                         56
@@ -259,22 +469,36 @@ class MainActivity : AppCompatActivity() {
             TextView(this).apply {
                 setTextColor(
                     Color.rgb(
-                        226,
-                        204,
+                        230,
+                        210,
                         255
                     )
                 )
-                textSize = 14f
-                text = "Hedef yok"
+                textSize =
+                    13f
+                text =
+                    "Hedef yok"
             }
 
         routeBar.addView(
             routeLabel,
             LinearLayout.LayoutParams(
                 0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dp(38),
                 1f
             )
+        )
+
+        routeBar.addView(
+            button("HEDEF") {
+                mapView.focusOnTarget()
+            }
+        )
+
+        routeBar.addView(
+            button("İKİSİ") {
+                mapView.showRouteOverview()
+            }
         )
 
         routeCloseButton =
@@ -286,47 +510,123 @@ class MainActivity : AppCompatActivity() {
             routeCloseButton
         )
 
-        root.addView(
-            routeBar
+        mapContainer.addView(
+            routeBar,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            ).apply {
+                topMargin =
+                    dp(50)
+                leftMargin =
+                    dp(6)
+                rightMargin =
+                    dp(6)
+            }
         )
 
-        mapView = DxfView(this).apply {
-            onSegmentSelected = { segment, info ->
-                currentInfo = info
+        val bottom =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+                gravity =
+                    Gravity.CENTER_VERTICAL
+                setPadding(
+                    dp(8),
+                    dp(4),
+                    dp(5),
+                    dp(4)
+                )
+                setBackgroundColor(
+                    Color.argb(
+                        220,
+                        11,
+                        20,
+                        32
+                    )
+                )
+            }
 
-                routeTarget =
-                    segment
+        selectionLabel =
+            TextView(this).apply {
+                setTextColor(
+                    Color.WHITE
+                )
+                textSize =
+                    14f
+                text =
+                    "Bir hatta dokun"
+            }
+
+        bottom.addView(
+            selectionLabel,
+            LinearLayout.LayoutParams(
+                0,
+                dp(40),
+                1f
+            )
+        )
+
+        reverseButton =
+            button("TERS") {
+                currentInfo =
+                    currentInfo
+                        ?.reversedCopy()
 
                 refreshSelection()
-                refreshRouteGuide()
+            }.apply {
+                isEnabled =
+                    false
             }
-        }
-        root.addView(mapView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        selectionLabel = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            text = "Bir hatta dokun"
-        }
-        bottom.addView(selectionLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        undoButton =
+            button("GERİ AL") {
+                toggleCompleted(false)
+            }.apply {
+                isEnabled =
+                    false
+            }
 
-        reverseButton = button("TERS ÇEVİR") {
-            currentInfo = currentInfo?.reversedCopy()
-            refreshSelection()
-        }.apply { isEnabled = false }
-        undoButton = button("İŞARETİ KALDIR") { toggleCompleted(false) }.apply { isEnabled = false }
-        confirmButton = button("ONAYLA") { confirmSelection() }.apply { isEnabled = false }
-        bottom.addView(reverseButton)
-        bottom.addView(undoButton)
-        bottom.addView(confirmButton)
-        root.addView(bottom)
+        confirmButton =
+            button("ONAYLA") {
+                confirmSelection()
+            }.apply {
+                isEnabled =
+                    false
+            }
 
-        setContentView(root)
+        bottom.addView(
+            reverseButton
+        )
+        bottom.addView(
+            undoButton
+        )
+        bottom.addView(
+            confirmButton
+        )
+
+        mapContainer.addView(
+            bottom,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+            )
+        )
+
+        root.addView(
+            mapContainer,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        setContentView(
+            root
+        )
     }
 
     private fun loadFotonMap(uri: Uri) {
@@ -434,8 +734,8 @@ class MainActivity : AppCompatActivity() {
             ) {
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    1000L,
-                    0.5f,
+                    1500L,
+                    1.0f,
                     locationListener
                 )
 
@@ -460,8 +760,8 @@ class MainActivity : AppCompatActivity() {
             ) {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
-                    2000L,
-                    1.0f,
+                    3000L,
+                    2.0f,
                     locationListener
                 )
 
@@ -559,6 +859,34 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val projectCenterEasting =
+            drawing.originX +
+                drawing.center.x
+
+        val projectCenterNorthing =
+            drawing.originY +
+                drawing.center.y
+
+        val activeCentralMeridian =
+            ItrfTmProjection
+                .bestCentralMeridian(
+                    latitudeDeg =
+                        location.latitude,
+                    longitudeDeg =
+                        location.longitude,
+                    projectEasting =
+                        projectCenterEasting,
+                    projectNorthing =
+                        projectCenterNorthing,
+                    preferred =
+                        drawing.centralMeridian
+                )
+
+        mapView
+            .setCentralMeridianOverride(
+                activeCentralMeridian
+            )
+
         val projected =
             ItrfTmProjection.forward(
                 latitudeDeg =
@@ -566,7 +894,7 @@ class MainActivity : AppCompatActivity() {
                 longitudeDeg =
                     location.longitude,
                 centralMeridianDeg =
-                    drawing.centralMeridian
+                    activeCentralMeridian
             )
 
         val local =
@@ -966,12 +1294,41 @@ class MainActivity : AppCompatActivity() {
         return uri.lastPathSegment ?: "proje.fotonmap"
     }
 
-    private fun button(text: String, onClick: () -> Unit): Button = Button(this).apply {
-        this.text = text
-        isAllCaps = false
-        setOnClickListener { onClick() }
-        minHeight = dp(44)
-    }
+    private fun button(
+        text: String,
+        onClick: () -> Unit
+    ): Button =
+        Button(this).apply {
+            this.text =
+                text
+
+            isAllCaps =
+                false
+
+            textSize =
+                11.5f
+
+            minHeight =
+                0
+            minimumHeight =
+                0
+
+            minWidth =
+                0
+            minimumWidth =
+                0
+
+            setPadding(
+                dp(10),
+                0,
+                dp(10),
+                0
+            )
+
+            setOnClickListener {
+                onClick()
+            }
+        }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
