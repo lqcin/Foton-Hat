@@ -3,7 +3,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="FOTON DXF Hat Seçici"
+        android:label="FOTONMAP Hat Seçici"
         android:supportsRtl="true"
         android:theme="@style/Theme.FotonDxf">
 
