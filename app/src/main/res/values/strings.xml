@@ -1,5 +1,4 @@
 <resources>
     <string name="app_name">FOTONMAP Hat Seçici</string>
     <string name="ime_name">FOTON Klavye</string>
-    <string name="accessibility_desc">FOTONMAP eski erişilebilirlik yapılandırması</string>
 </resources>
